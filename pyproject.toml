@@ -9,6 +9,8 @@ dependencies = [
     "sqlalchemy>=2.0",
     "langgraph>=0.2",
     "uvicorn>=0.30.0",
+    "python-dotenv>=1.0",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]

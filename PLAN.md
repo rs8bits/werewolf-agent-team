@@ -4,8 +4,8 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 第一阶段骨架初始化已完成 |
-| 最新提交 | `chore: initialize project skeleton` |
+| 项目阶段 | 里程碑 2A 百炼/Qwen 大模型接入层已完成 |
+| 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
 | 虚拟环境 | `.venv`（Python 3.11+） |
@@ -25,6 +25,14 @@
 - `README.md` 包含项目简介、运行方式、测试方式
 - `.gitignore` 排除 `.venv/`、`__pycache__/`、构建产物、缓存目录、`TEMP_TASK_*.md`
 - 文档文件名已对齐：`TASKS.md`、`AGENTS.md`
+
+### 里程碑 2A：百炼/Qwen 大模型接入层
+
+- `app/config/settings.py` 从 `.env` / 环境变量读取 DashScope 配置
+- `app/llm/schemas.py` 定义模型调用的基础 Pydantic 数据结构
+- `app/llm/client.py` 封装 OpenAI-compatible 客户端，惰性初始化，不在 import 时发起网络请求
+- `.env.example` 提供本地配置模板，不包含真实密钥
+- `tests/test_settings.py` / `tests/test_llm_client.py` 覆盖配置读取、缺失密钥错误、mock 模型调用
 
 ### 目录结构
 
@@ -120,6 +128,15 @@ werewolf-agent-team/
 # 阿里云百炼 DashScope API Key
 # 获取地址：https://dashscope.console.aliyun.com/apiKey
 DASHSCOPE_API_KEY=your-api-key-here
+
+# 阿里云百炼 OpenAI 兼容接口（北京地域）
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# 默认测试模型
+DASHSCOPE_MODEL=qwen-plus
+
+# 请求超时（秒）
+DASHSCOPE_TIMEOUT_SECONDS=60
 ```
 
 ## 7. 测试与交付标准
@@ -136,6 +153,22 @@ DASHSCOPE_API_KEY=your-api-key-here
 | 日志 | 关键节点必须输出结构化日志 |
 
 ## 8. 后续里程碑
+
+### 里程碑 2A：百炼/Qwen 大模型接入层 ✅
+
+**状态**：已完成基础接入层，等待里程碑 2B（Agent / 规则引擎）。
+
+已交付：
+- `app/config/settings.py` — 配置模块，从环境变量 / `.env` 读取 DashScope 配置
+- `app/llm/schemas.py` — Pydantic 数据结构（ChatMessage, ChatRequest, ChatResponse）
+- `app/llm/client.py` — `LLMClient` 封装，基于 OpenAI Python SDK，惰性初始化，不在 import 时发起网络请求
+- `.env.example` — 环境变量模板（仅变量名，无真实 Key）
+- `tests/test_settings.py` — 配置读取测试
+- `tests/test_llm_client.py` — mock client 测试（不调用真实百炼接口）
+
+约定：
+- 真实 `DASHSCOPE_API_KEY` 仅存于本地 `.env`，禁止提交
+- 新开发者复制 `.env.example` 为 `.env` 后填入自己的 Key
 
 ### 里程碑 2：6 人局 MVP
 
