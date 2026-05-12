@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 2B 核心领域模型与 6 人板子配置已完成 |
+| 项目阶段 | 里程碑 2C-2 规则引擎 MVP 已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -210,20 +210,42 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - `day`：`["speak"]`
 - `vote`：存活且可投票 `["vote"]`，否则空
 
+### 里程碑 2C-2：规则引擎 MVP ✅
+
+**状态**：已完成 6 人局规则引擎最小闭环。
+
+已交付：
+- `app/engine/initializer.py` — `initialize_game()` 6 人局初始化，生成 `GameState`、`TruthState`、存活列表和初始公共事件
+- `app/engine/death.py` — `kill_player()` 玩家死亡处理，更新状态、公共事件，校验存在性与存活
+- `app/engine/vote.py` — `Vote` / `VoteResult` Pydantic 模型，`tally_votes()` 投票统计（平票处理），`apply_vote_result()` 执行放逐
+- `app/engine/wincheck.py` — `check_winner()` 胜负判定（好人胜：狼全死；狼人胜：神全死或民全死）
+- `app/engine/resolver.py` — `NightActionSet` / `NightResult` Pydantic 模型，`resolve_night()` 最小夜间结算（狼杀、女巫救/毒、预言家查验）
+- `app/engine/__init__.py` — 统一导出
+- `tests/test_engine.py` — 覆盖 kill_player、投票统计/平票/无效票、胜负判定、夜间结算
+
+规则保证：
+- 6 人预设可初始化为完整 `GameState`
+- 只能杀存活玩家，不存在座位号抛异常
+- 死亡玩家/无投票权玩家投票被忽略
+- 弃票（target=None）不计数
+- 最高票唯一放逐，平票不放逐且记录 tied_seats
+- 同玩家被杀且被毒只生成一次死亡事件
+- 女巫救中狼人杀目标则该玩家不死
+
 ### 里程碑 2：6 人局 MVP
 
 **目标**：跑通完整狼人杀对局流程的最小闭环。
 
 - ✅ 实现 `GameState` schema（`PublicState`、`TruthState`）- 已在 2B 完成
 - ✅ 实现 `ViewBuilder`，按玩家身份构建可见视图 - 已在 2C-1 完成
-- 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）
+- ✅ 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）- 已在 2C-2 完成
 - 实现 LangGraph 主流程图（夜晚子图 + 白天子图）
 - 实现基础 Agent（狼人、预言家、女巫、平民）
 - ✅ 接入百炼 `qwen-plus` 模型 - 已在 2A 完成
 - 实现结构化日志记录
 - ✅ 创建 `.env.example` - 已在 2A 完成
 
-**下一步建议（里程碑 2C-2）**：规则引擎 MVP，实现夜间结算、投票放逐、胜负判定。
+**下一步建议（里程碑 2C-3）**：基础 Agent 输出结构 / LLM Agent 调用，实现各身份 Agent 的结构化输出与角色推理。
 
 ### 里程碑 3：API 与日志
 
