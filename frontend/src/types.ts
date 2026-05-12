@@ -53,3 +53,30 @@ export interface CreateGameRequest {
   agent_mode: AgentMode;
   model?: string | null;
 }
+
+export type LiveMessage =
+  | {
+      type: "snapshot";
+      game_id: string;
+      game: GameState;
+      events: PersistedEvent[];
+    }
+  | {
+      type: "event";
+      game_id: string;
+      sequence: number;
+      event: GameEventPayload;
+      game?: GameState;
+    }
+  | {
+      type: "state";
+      status: string;
+      game: GameState;
+    }
+  | {
+      type: "ping";
+      game_id: string;
+    }
+  | {
+      error: string;
+    };

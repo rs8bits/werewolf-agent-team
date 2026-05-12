@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -34,10 +37,25 @@ class Agent(Protocol):
 # ── Event logging helper ──────────────────────────────────────────────────────
 
 
+EventSink = Callable[[GameState, dict[str, Any]], None]
+_event_sink: ContextVar[EventSink | None] = ContextVar("event_sink", default=None)
+
+
+@contextmanager
+def live_event_sink(sink: EventSink | None) -> Iterator[None]:
+    token = _event_sink.set(sink)
+    try:
+        yield
+    finally:
+        _event_sink.reset(token)
+
+
 def _log_event(game_state: GameState, event_type: str, **kwargs: Any) -> None:
-    game_state.public_state.public_events.append(
-        {"type": event_type, **kwargs}
-    )
+    event = {"type": event_type, **kwargs}
+    game_state.public_state.public_events.append(event)
+    sink = _event_sink.get()
+    if sink is not None:
+        sink(game_state, event)
 
 
 def _alive_seats(game_state: GameState) -> list[int]:

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, WebSocket
+import asyncio
 
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.services.event_bus import game_event_bus
 from app.services.game_session import GameSessionService
 
 router = APIRouter()
@@ -11,33 +16,38 @@ router = APIRouter()
 async def ws_game_events(
     websocket: WebSocket,
     game_id: str,
+    db: Session = Depends(get_db),
 ):
-    """WebSocket：连接后发送当前事件快照，然后关闭。
-
-    简化实现 —— 不做实时推送订阅。
-    """
+    """WebSocket：发送当前快照，并持续推送运行中的事件。"""
     await websocket.accept()
 
-    # Create a synchronous DB session inside the async handler
-    from app.db import SessionLocal
+    service = GameSessionService(db)
+    game_state = service.get_game(game_id)
+    if game_state is None:
+        await websocket.send_json({"error": f"对局不存在: {game_id}"})
+        await websocket.close()
+        return
 
-    db = SessionLocal()
+    events = service.list_events(game_id)
+    await websocket.send_json(
+        {
+            "type": "snapshot",
+            "game_id": game_id,
+            "game": game_state.model_dump(),
+            "events": events,
+        }
+    )
+
+    subscriber = game_event_bus.subscribe(game_id)
     try:
-        service = GameSessionService(db)
-        game_state = service.get_game(game_id)
-        if game_state is None:
-            await websocket.send_json({"error": f"对局不存在: {game_id}"})
-        else:
-            events = service.list_events(game_id)
-            await websocket.send_json(
-                {
-                    "game_id": game_id,
-                    "phase": game_state.public_state.phase.value,
-                    "round": game_state.public_state.round,
-                    "events": events,
-                }
-            )
+        while True:
+            try:
+                message = await asyncio.wait_for(subscriber.queue.get(), timeout=25)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping", "game_id": game_id})
+                continue
+            await websocket.send_json(message)
+    except WebSocketDisconnect:
+        pass
     finally:
-        db.close()
-
-    await websocket.close()
+        game_event_bus.unsubscribe(game_id, subscriber)

@@ -5,6 +5,11 @@ const DEFAULT_API_BASE = "http://127.0.0.1:8001";
 export const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? DEFAULT_API_BASE;
 
+export function gameEventsWebSocketUrl(gameId: string): string {
+  const wsBase = API_BASE.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+  return `${wsBase}/ws/games/${encodeURIComponent(gameId)}/events`;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;

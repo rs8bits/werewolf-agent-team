@@ -131,6 +131,8 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 打开：http://127.0.0.1:5173
 
+观战台会通过 WebSocket 连接 `/ws/games/{game_id}/events`，运行对局时事件会逐条推送到圆桌和发言顺序列表，不必等 HTTP 请求完成后才刷新。
+
 如需连接其他后端地址：
 
 ```bash

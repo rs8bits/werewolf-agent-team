@@ -9,24 +9,36 @@ import {
   Eye,
   FastForward,
   Loader2,
+  MessageCircle,
   Moon,
   Play,
   RefreshCw,
   Search,
   Shield,
   Swords,
-  Users
+  Users,
+  Wifi,
+  WifiOff
 } from "lucide-react";
 import {
   API_BASE,
   createGame,
+  gameEventsWebSocketUrl,
   getEvents,
   getGame,
   health,
   runCycle,
   runUntilFinished
 } from "./api";
-import type { AgentMode, Camp, GameEventPayload, GameState, PersistedEvent } from "./types";
+import type {
+  AgentMode,
+  Camp,
+  GameEventPayload,
+  GameState,
+  LiveMessage,
+  PersistedEvent,
+  PlayerState
+} from "./types";
 import "./styles.css";
 
 const STORAGE_KEY = "werewolf:lastGameId";
@@ -112,6 +124,60 @@ function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode;
   return <span className={`pill pill-${tone}`}>{children}</span>;
 }
 
+function playerSubtitle(player: PlayerState): string {
+  return `${roleLabels[player.role] ?? player.role} / ${campLabels[player.camp]}`;
+}
+
+function RoundTable({
+  game,
+  activeSeatNo,
+  activeSpeech
+}: {
+  game: GameState | null;
+  activeSeatNo: number | null;
+  activeSpeech: PersistedEvent | null;
+}) {
+  if (!game) {
+    return <div className="empty">还没有对局</div>;
+  }
+
+  const total = game.players.length;
+  return (
+    <div className="round-table-wrap">
+      <div className="round-table">
+        <div className="table-center">
+          <span>{phaseLabels[game.public_state.phase]}</span>
+          <strong>第 {game.public_state.round} 轮</strong>
+          <p>{activeSpeech ? eventBody(activeSpeech.event) : "等待发言或行动"}</p>
+        </div>
+        {game.players.map((player, index) => {
+          const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+          const x = 50 + Math.cos(angle) * 42;
+          const y = 50 + Math.sin(angle) * 42;
+          const isActive = activeSeatNo === player.seat_no;
+          return (
+            <article
+              className={`table-seat ${player.camp} ${player.status.alive ? "" : "dead"} ${
+                isActive ? "active" : ""
+              }`}
+              key={player.seat_no}
+              style={{ left: `${x}%`, top: `${y}%` }}
+            >
+              <div className="table-seat-head">
+                <strong>{player.seat_no}号</strong>
+                {game.sheriff_seat_no === player.seat_no && <Crown size={14} />}
+              </div>
+              <span>{player.name}</span>
+              <small>{playerSubtitle(player)}</small>
+              <em>{player.status.alive ? "存活" : "死亡"}</em>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState<"checking" | "ok" | "down">("checking");
   const [playerCount, setPlayerCount] = useState<6 | 12>(12);
@@ -123,6 +189,7 @@ function App() {
   const [events, setEvents] = useState<PersistedEvent[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wsStatus, setWsStatus] = useState<"idle" | "connecting" | "live" | "closed">("idle");
 
   const currentGameId = game?.game_id ?? gameIdInput.trim();
   const aliveCount = game?.players.filter((p) => p.status.alive).length ?? 0;
@@ -130,6 +197,13 @@ function App() {
     game?.players.filter((p) => p.status.alive && p.camp === "werewolf").length ?? 0;
 
   const latestEvents = useMemo(() => [...events].reverse(), [events]);
+  const activeEvent = events.length ? events[events.length - 1].event : null;
+  const activeSeatNo = typeof activeEvent?.seat_no === "number" ? activeEvent.seat_no : null;
+  const speechEvents = useMemo(
+    () => events.filter((item) => item.event.type === "speech" || item.event.type === "pk_speech"),
+    [events]
+  );
+  const latestSpeech = speechEvents.length ? speechEvents[speechEvents.length - 1] : null;
 
   async function withBusy(label: string, action: () => Promise<void>) {
     setBusy(label);
@@ -170,6 +244,67 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!game?.game_id) {
+      setWsStatus("idle");
+      return;
+    }
+
+    let closedByEffect = false;
+    const socket = new WebSocket(gameEventsWebSocketUrl(game.game_id));
+    setWsStatus("connecting");
+
+    socket.onopen = () => {
+      if (!closedByEffect) setWsStatus("live");
+    };
+
+    socket.onmessage = (messageEvent) => {
+      const message = JSON.parse(messageEvent.data) as LiveMessage;
+      if ("error" in message) {
+        setError(message.error);
+        return;
+      }
+      if (message.type === "snapshot") {
+        setGame(message.game);
+        setEvents(message.events);
+        return;
+      }
+      if (message.type === "event") {
+        if (message.game) setGame(message.game);
+        setEvents((current) => {
+          if (current.some((item) => item.sequence === message.sequence)) {
+            return current;
+          }
+          return [
+            ...current,
+            {
+              sequence: message.sequence,
+              event: message.event,
+              created_at: null
+            }
+          ].sort((a, b) => a.sequence - b.sequence);
+        });
+        return;
+      }
+      if (message.type === "state") {
+        setGame(message.game);
+      }
+    };
+
+    socket.onerror = () => {
+      if (!closedByEffect) setWsStatus("closed");
+    };
+
+    socket.onclose = () => {
+      if (!closedByEffect) setWsStatus("closed");
+    };
+
+    return () => {
+      closedByEffect = true;
+      socket.close();
+    };
+  }, [game?.game_id]);
+
   const winnerText = isCamp(game?.winner) ? `${campLabels[game.winner]}胜利` : "未决";
 
   return (
@@ -180,6 +315,16 @@ function App() {
           <h1>狼人杀对局控制台</h1>
         </div>
         <div className="topbar-meta">
+          <StatusPill tone={wsStatus === "live" ? "good" : wsStatus === "closed" ? "bad" : "warn"}>
+            {wsStatus === "live" ? <Wifi size={14} /> : <WifiOff size={14} />} WS{" "}
+            {wsStatus === "live"
+              ? "实时"
+              : wsStatus === "connecting"
+                ? "连接中"
+                : wsStatus === "closed"
+                  ? "断开"
+                  : "待连接"}
+          </StatusPill>
           <StatusPill tone={apiStatus === "ok" ? "good" : apiStatus === "down" ? "bad" : "warn"}>
             <Activity size={14} /> API {apiStatus === "ok" ? "在线" : apiStatus === "down" ? "离线" : "检查中"}
           </StatusPill>
@@ -363,36 +508,29 @@ function App() {
         <section className="players-panel">
           <div className="section-title">
             <Swords size={18} />
-            <h2>玩家席位</h2>
+            <h2>圆桌席位</h2>
           </div>
-          <div className="player-grid">
-            {game?.players.map((player) => (
-              <article
-                className={`seat ${player.status.alive ? "" : "dead"} ${player.camp}`}
-                key={player.seat_no}
-              >
-                <div className="seat-main">
-                  <strong>
-                    {player.seat_no}号 {player.name}
-                  </strong>
-                  {game.sheriff_seat_no === player.seat_no && (
-                    <span title="警长" className="sheriff-mark">
-                      <Crown size={15} />
-                    </span>
-                  )}
-                </div>
-                <div className="seat-tags">
-                  <StatusPill tone={player.camp === "werewolf" ? "bad" : "good"}>
-                    {campLabels[player.camp]}
-                  </StatusPill>
-                  <StatusPill>{roleLabels[player.role] ?? player.role}</StatusPill>
-                  <StatusPill tone={player.status.alive ? "good" : "bad"}>
-                    {player.status.alive ? "存活" : "死亡"}
-                  </StatusPill>
-                  {!player.status.can_vote && <StatusPill tone="warn">无票权</StatusPill>}
-                </div>
-              </article>
-            )) ?? <div className="empty">还没有对局</div>}
+          <RoundTable game={game} activeSeatNo={activeSeatNo} activeSpeech={latestSpeech} />
+          <div className="speech-order">
+            <div className="section-title compact">
+              <MessageCircle size={16} />
+              <h3>发言顺序</h3>
+            </div>
+            <div className="speech-list">
+              {speechEvents.map((item) => (
+                <article
+                  className={`speech-item ${
+                    activeSeatNo === item.event.seat_no ? "active" : ""
+                  }`}
+                  key={item.sequence}
+                >
+                  <span>#{item.sequence}</span>
+                  <strong>{item.event.seat_no as number}号</strong>
+                  <p>{eventBody(item.event)}</p>
+                </article>
+              ))}
+              {!speechEvents.length && <div className="empty slim">暂无发言</div>}
+            </div>
           </div>
         </section>
 

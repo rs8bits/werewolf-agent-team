@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import get_db
 from app.main import app
 from app.models import Base
+from app.services.event_bus import game_event_bus
 from app.state.schemas import GamePhase
 
 
@@ -207,3 +208,34 @@ class TestHealth:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+class TestGameWebSocket:
+    def test_events_websocket_sends_snapshot(self, client):
+        create_resp = client.post("/games", json={})
+        game_id = create_resp.json()["game_id"]
+        with client.websocket_connect(f"/ws/games/{game_id}/events") as ws:
+            data = ws.receive_json()
+            assert data["type"] == "snapshot"
+            assert data["game_id"] == game_id
+            assert data["game"]["game_id"] == game_id
+            assert len(data["events"]) == 1
+
+    def test_events_websocket_receives_live_event(self, client):
+        create_resp = client.post("/games", json={})
+        game_id = create_resp.json()["game_id"]
+        with client.websocket_connect(f"/ws/games/{game_id}/events") as ws:
+            ws.receive_json()
+            game_event_bus.publish(
+                game_id,
+                {
+                    "type": "event",
+                    "game_id": game_id,
+                    "sequence": 1,
+                    "event": {"type": "speech", "seat_no": 1, "content": "测试发言"},
+                },
+            )
+            data = ws.receive_json()
+            assert data["type"] == "event"
+            assert data["sequence"] == 1
+            assert data["event"]["content"] == "测试发言"

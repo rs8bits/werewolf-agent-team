@@ -13,11 +13,13 @@ from app.config.settings import load_config
 from app.engine import initialize_game
 from app.graph.main_graph import (
     Agent,
+    live_event_sink,
     run_one_cycle,
     run_until_finished,
 )
 from app.models import GameEvent, GameSession
 from app.llm.client import LLMClient
+from app.services.event_bus import game_event_bus
 from app.state.schemas import GameState
 
 
@@ -69,6 +71,54 @@ class GameSessionService:
             session.state_json = game_state.model_dump()
 
         self.db.commit()
+
+    def _persist_live_event(self, game_state: GameState, event: dict) -> None:
+        game_id = game_state.game_id
+        sequence = len(game_state.public_state.public_events) - 1
+        exists = (
+            self.db.query(GameEvent)
+            .filter(GameEvent.game_id == game_id, GameEvent.sequence == sequence)
+            .first()
+            is not None
+        )
+        if not exists:
+            self.db.add(
+                GameEvent(
+                    game_id=game_id,
+                    sequence=sequence,
+                    event_json=event,
+                )
+            )
+
+        session = (
+            self.db.query(GameSession)
+            .filter(GameSession.game_id == game_id)
+            .first()
+        )
+        if session is not None:
+            session.state_json = game_state.model_dump()
+        self.db.commit()
+
+        game_event_bus.publish(
+            game_id,
+            {
+                "type": "event",
+                "game_id": game_id,
+                "sequence": sequence,
+                "event": event,
+                "game": game_state.model_dump(),
+            },
+        )
+
+    def _publish_state(self, game_state: GameState, status: str) -> None:
+        game_event_bus.publish(
+            game_state.game_id,
+            {
+                "type": "state",
+                "status": status,
+                "game": game_state.model_dump(),
+            },
+        )
 
     def _load_game_state(self, game_id: str) -> GameState | None:
         row = (
@@ -134,8 +184,11 @@ class GameSessionService:
         if game_state is None:
             raise ValueError(f"对局不存在: {game_id}")
         agents = self._build_agents(game_state)
-        run_one_cycle(game_state, agents)
+        self._publish_state(game_state, "running")
+        with live_event_sink(self._persist_live_event):
+            run_one_cycle(game_state, agents)
         self._save_game_and_events(game_state)
+        self._publish_state(game_state, "idle")
         return game_state
 
     def run_until_finished(
@@ -145,8 +198,11 @@ class GameSessionService:
         if game_state is None:
             raise ValueError(f"对局不存在: {game_id}")
         agents = self._build_agents(game_state)
-        run_until_finished(game_state, agents, max_cycles=max_cycles)
+        self._publish_state(game_state, "running")
+        with live_event_sink(self._persist_live_event):
+            run_until_finished(game_state, agents, max_cycles=max_cycles)
         self._save_game_and_events(game_state)
+        self._publish_state(game_state, "idle")
         return game_state
 
     def list_events(self, game_id: str) -> list[dict]:

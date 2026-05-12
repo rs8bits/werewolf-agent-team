@@ -274,58 +274,175 @@ h3 {
   animation: spin 1s linear infinite;
 }
 
-.player-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.round-table-wrap {
+  min-width: 0;
 }
 
-.seat {
-  min-width: 0;
-  border: 1px solid #d0dad4;
+.round-table {
+  position: relative;
+  overflow: hidden;
+  min-height: 540px;
+  border: 1px solid #d2ddd6;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at center, #f7fbf8 0 34%, transparent 35%),
+    linear-gradient(180deg, #ffffff, #f8faf8);
+}
+
+.round-table::before {
+  position: absolute;
+  inset: 24%;
+  border: 2px solid #b7c9bf;
+  border-radius: 50%;
+  background: #e8f0ea;
+  content: "";
+}
+
+.table-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  width: min(44%, 260px);
+  min-height: 145px;
+  place-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #c5d3cb;
+  border-radius: 50%;
+  padding: 22px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.table-center span {
+  color: #607268;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.table-center strong {
+  font-size: 20px;
+}
+
+.table-center p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #516157;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.table-seat {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  width: 132px;
+  min-height: 88px;
+  gap: 3px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #cfdbd4;
   border-left: 4px solid #6c7f75;
   border-radius: 8px;
-  padding: 10px;
+  padding: 8px;
   background: #ffffff;
+  box-shadow: 0 8px 24px rgb(32 49 40 / 8%);
 }
 
-.seat.werewolf {
+.table-seat.werewolf {
   border-left-color: #b84945;
 }
 
-.seat.good {
+.table-seat.good {
   border-left-color: #2d7a58;
 }
 
-.seat.dead {
-  background: #f3f1ee;
-  color: #6d6a65;
+.table-seat.dead {
+  opacity: 0.55;
 }
 
-.seat-main {
+.table-seat.active {
+  border-color: #1d5f46;
+  box-shadow: 0 0 0 3px #ccebdd;
+}
+
+.table-seat-head {
   display: flex;
-  min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  color: #243228;
 }
 
-.seat-main strong {
+.table-seat span,
+.table-seat small,
+.table-seat em {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sheriff-mark {
-  display: inline-flex;
-  color: #a66a12;
+.table-seat span {
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.seat-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+.table-seat small {
+  color: #5d6d63;
+  font-size: 12px;
+}
+
+.table-seat em {
+  color: #68776f;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.speech-order {
+  margin-top: 12px;
+}
+
+.section-title.compact {
+  margin-bottom: 8px;
+}
+
+.speech-list {
+  display: grid;
+  gap: 7px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.speech-item {
+  display: grid;
+  grid-template-columns: 48px 48px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #d8e0da;
+  border-radius: 8px;
+  padding: 9px;
+  background: #ffffff;
+}
+
+.speech-item.active {
+  border-color: #1d5f46;
+  background: #f0faf5;
+}
+
+.speech-item span,
+.speech-item strong {
+  color: #607268;
+  font-size: 12px;
+}
+
+.speech-item p {
+  color: #394a40;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .pill {
@@ -415,6 +532,10 @@ h3 {
   text-align: center;
 }
 
+.empty.slim {
+  padding: 10px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -446,9 +567,32 @@ h3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workspace,
-  .player-grid {
+  .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .round-table {
+    min-height: auto;
+    padding: 12px;
+  }
+
+  .round-table::before,
+  .table-center {
+    display: none;
+  }
+
+  .table-seat {
+    position: relative;
+    top: auto !important;
+    left: auto !important;
+    width: 100%;
+    min-height: 0;
+    margin-bottom: 8px;
+    transform: none;
+  }
+
+  .speech-item {
+    grid-template-columns: 44px 42px minmax(0, 1fr);
   }
 
   .event-row {
