@@ -13,6 +13,11 @@ class ActionType(str, Enum):
     seer_check = "seer_check"
     witch_save = "witch_save"
     witch_poison = "witch_poison"
+    hunter_shoot = "hunter_shoot"
+    guard_protect = "guard_protect"
+    run_for_sheriff = "run_for_sheriff"
+    sheriff_vote = "sheriff_vote"
+    sheriff_assign = "sheriff_assign"
 
 
 class SpeakAction(BaseModel):
@@ -42,8 +47,44 @@ class WitchAction(BaseModel):
     target_seat_no: int = Field(ge=1, description="目标座位号")
 
 
+class HunterShootAction(BaseModel):
+    action_type: Literal[ActionType.hunter_shoot] = ActionType.hunter_shoot
+    target_seat_no: int = Field(ge=1, description="开枪目标座位号")
+
+
+class GuardProtectAction(BaseModel):
+    action_type: Literal[ActionType.guard_protect] = ActionType.guard_protect
+    target_seat_no: int = Field(ge=1, description="守护目标座位号")
+
+
+class RunForSheriffAction(BaseModel):
+    action_type: Literal[ActionType.run_for_sheriff] = ActionType.run_for_sheriff
+    run: bool = Field(..., description="是否参选警长")
+
+
+class SheriffVoteAction(BaseModel):
+    action_type: Literal[ActionType.sheriff_vote] = ActionType.sheriff_vote
+    target_seat_no: int | None = Field(default=None, description="警长投票目标，None 表示弃票")
+
+
+class SheriffAssignAction(BaseModel):
+    action_type: Literal[ActionType.sheriff_assign] = ActionType.sheriff_assign
+    target_seat_no: int = Field(ge=1, description="警徽移交给的目标座位号")
+
+
 AgentAction = Annotated[
-    Union[SpeakAction, VoteAction, WerewolfKillAction, SeerCheckAction, WitchAction],
+    Union[
+        SpeakAction,
+        VoteAction,
+        WerewolfKillAction,
+        SeerCheckAction,
+        WitchAction,
+        HunterShootAction,
+        GuardProtectAction,
+        RunForSheriffAction,
+        SheriffVoteAction,
+        SheriffAssignAction,
+    ],
     Field(discriminator="action_type"),
 ]
 

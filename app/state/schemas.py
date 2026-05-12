@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.config.rule_config import RuleConfig, default_rule_config
+
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -101,12 +103,38 @@ class TruthState(BaseModel):
     night_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# ── Runtime state (system-only) ──────────────────────────────────────────────
+
+
+class SeerCheckRecord(BaseModel):
+    round: int = Field(ge=0)
+    seer_seat_no: int = Field(ge=1)
+    target_seat_no: int = Field(ge=1)
+    result: Camp
+
+
+class RuntimeState(BaseModel):
+    witch_save_used: bool = False
+    witch_poison_used: bool = False
+    guard_last_target: int | None = Field(default=None, ge=1)
+    pending_wolf_kill_target: int | None = Field(default=None, ge=1)
+    seer_checks: list[SeerCheckRecord] = Field(default_factory=list)
+    hunter_shot_used_seats: list[int] = Field(default_factory=list)
+    idiot_revealed_seats: list[int] = Field(default_factory=list)
+    sheriff_election_done: bool = False
+
+
 # ── Game state ───────────────────────────────────────────────────────────────
 
 
 class GameState(BaseModel):
     game_id: str
+    agent_mode: str = "scripted"
+    model: str | None = None
+    rule_config: RuleConfig = Field(default_factory=lambda: default_rule_config(6))
     public_state: PublicState = Field(default_factory=PublicState)
     players: list[PlayerState] = Field(default_factory=list)
     truth_state: TruthState = Field(default_factory=TruthState)
+    runtime_state: RuntimeState = Field(default_factory=RuntimeState)
+    sheriff_seat_no: int | None = Field(default=None, ge=1)
     winner: Camp | None = None

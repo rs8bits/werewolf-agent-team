@@ -52,8 +52,18 @@ SIX_PLAYER_ROLE_COUNTS = (
     RoleCount(role=Role.villager, count=2),
 )
 
+TWELVE_PLAYER_ROLE_COUNTS = (
+    RoleCount(role=Role.werewolf, count=4),
+    RoleCount(role=Role.seer, count=1),
+    RoleCount(role=Role.witch, count=1),
+    RoleCount(role=Role.hunter, count=1),
+    RoleCount(role=Role.idiot, count=1),
+    RoleCount(role=Role.villager, count=4),
+)
+
 SUPPORTED_COUNTS: dict[int, tuple[RoleCount, ...]] = {
     6: SIX_PLAYER_ROLE_COUNTS,
+    12: TWELVE_PLAYER_ROLE_COUNTS,
 }
 
 
@@ -61,6 +71,13 @@ def six_player_setup() -> RoleSetup:
     return RoleSetup(
         player_count=6,
         role_counts=[role_count.model_copy(deep=True) for role_count in SIX_PLAYER_ROLE_COUNTS],
+    )
+
+
+def twelve_player_setup() -> RoleSetup:
+    return RoleSetup(
+        player_count=12,
+        role_counts=[role_count.model_copy(deep=True) for role_count in TWELVE_PLAYER_ROLE_COUNTS],
     )
 
 

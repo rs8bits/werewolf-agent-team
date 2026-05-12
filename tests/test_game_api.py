@@ -58,9 +58,29 @@ class TestCreateGame:
         data = resp.json()
         assert [p["name"] for p in data["players"]] == names
 
+    def test_create_twelve_player_game(self, client):
+        resp = client.post("/games", json={"player_count": 12})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["players"]) == 12
+        roles = [player["role"] for player in data["players"]]
+        assert roles.count("werewolf") == 4
+        assert roles.count("hunter") == 1
+        assert roles.count("idiot") == 1
+        assert data["rule_config"]["enable_sheriff"] is True
+
     def test_create_game_invalid_name_count(self, client):
         resp = client.post("/games", json={"player_names": ["A"]})
         assert resp.status_code == 422  # Pydantic validation error
+
+    def test_create_llm_game_without_api_key_returns_400(self, client, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+        resp = client.post(
+            "/games",
+            json={"agent_mode": "llm", "model": "qwen3.5-27b"},
+        )
+        assert resp.status_code == 400
+        assert "DASHSCOPE_API_KEY" in resp.json()["detail"]
 
 
 class TestGetGame:
@@ -106,6 +126,17 @@ class TestRunCycle:
         if resp.status_code == 200:
             data = resp.json()
             assert data["public_state"]["round"] >= 2
+
+    def test_run_cycle_twelve_player_scripted_game(self, client):
+        create_resp = client.post("/games", json={"player_count": 12})
+        game_id = create_resp.json()["game_id"]
+        resp = client.post(f"/games/{game_id}/run-cycle")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["public_state"]["round"] == 1
+        event_types = [event["type"] for event in data["public_state"]["public_events"]]
+        assert "sheriff_elected" in event_types
+        assert "vote_resolved" in event_types
 
 
 class TestRunUntilFinished:

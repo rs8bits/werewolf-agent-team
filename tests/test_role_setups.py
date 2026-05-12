@@ -6,6 +6,7 @@ from app.config.role_setups import (
     RoleSetup,
     get_role_setup,
     six_player_setup,
+    twelve_player_setup,
 )
 from app.state.schemas import PlayerType, Role
 
@@ -85,6 +86,20 @@ class TestGetRoleSetup:
         assert setup.player_count == 6
         total = sum(rc.count for rc in setup.role_counts)
         assert total == 6
+
+    def test_twelve_players_returns_standard_setup(self):
+        setup = get_role_setup(12)
+        counts = {rc.role: rc.count for rc in setup.role_counts}
+        assert setup.player_count == 12
+        assert counts[Role.werewolf] == 4
+        assert counts[Role.seer] == 1
+        assert counts[Role.witch] == 1
+        assert counts[Role.hunter] == 1
+        assert counts[Role.idiot] == 1
+        assert counts[Role.villager] == 4
+
+    def test_twelve_player_setup_helper(self):
+        assert twelve_player_setup().player_count == 12
 
     def test_unsupported_count_raises_value_error(self):
         with pytest.raises(ValueError, match="Unsupported player count"):

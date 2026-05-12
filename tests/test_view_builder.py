@@ -11,6 +11,8 @@ from app.state.schemas import (
     PlayerType,
     PublicState,
     Role,
+    RuntimeState,
+    SeerCheckRecord,
     TruthState,
 )
 from app.state.view_builder import PlayerView, VisiblePlayer, build_player_view
@@ -233,3 +235,42 @@ class TestNoTruthStateInView:
         view = build_player_view(gs, 1)
         data = view.model_dump_json()
         assert "truth_state" not in data
+
+
+class TestPrivateInfoIsolation:
+    def test_seer_checks_visible_only_to_seer(self):
+        gs = _make_6p_game_state()
+        gs.runtime_state.seer_checks.append(
+            SeerCheckRecord(
+                round=1,
+                seer_seat_no=3,
+                target_seat_no=1,
+                result=Camp.werewolf,
+            )
+        )
+        seer_view = build_player_view(gs, 3)
+        villager_view = build_player_view(gs, 5)
+        assert seer_view.private_info["seer_checks"][0]["target_seat_no"] == 1
+        assert "seer_checks" not in villager_view.private_info
+
+    def test_witch_kill_target_visible_only_to_witch(self):
+        gs = _make_6p_game_state()
+        gs.runtime_state.pending_wolf_kill_target = 3
+        witch_view = build_player_view(gs, 4)
+        seer_view = build_player_view(gs, 3)
+        assert witch_view.private_info["pending_wolf_kill_target"] == 3
+        assert "pending_wolf_kill_target" not in seer_view.private_info
+
+    def test_private_night_events_are_filtered_from_view(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events.extend(
+            [
+                {"type": "night_action", "seat_no": 1, "target_seat_no": 3},
+                {"type": "night_resolved", "deaths": [], "seer_result": "werewolf"},
+            ]
+        )
+        view = build_player_view(gs, 5)
+        event_types = [event["type"] for event in view.public_events]
+        assert "night_action" not in event_types
+        night_resolved = next(event for event in view.public_events if event["type"] == "night_resolved")
+        assert "seer_result" not in night_resolved

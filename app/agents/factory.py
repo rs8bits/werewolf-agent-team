@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from app.agents.base_agent import BaseAgent
+from app.agents.guard_agent import GuardAgent
+from app.agents.hunter_agent import HunterAgent
+from app.agents.idiot_agent import IdiotAgent
 from app.agents.seer_agent import SeerAgent
 from app.agents.villager_agent import VillagerAgent
 from app.agents.werewolf_agent import WerewolfAgent
@@ -13,6 +16,9 @@ _AGENT_CLASSES: dict[Role, type[BaseAgent]] = {
     Role.seer: SeerAgent,
     Role.witch: WitchAgent,
     Role.villager: VillagerAgent,
+    Role.hunter: HunterAgent,
+    Role.idiot: IdiotAgent,
+    Role.guard: GuardAgent,
 }
 
 

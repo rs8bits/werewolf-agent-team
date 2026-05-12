@@ -27,6 +27,22 @@ curl -X POST http://127.0.0.1:8000/games \
   -d '{}'
 ```
 
+### 创建 12 人标准板
+```bash
+curl -X POST http://127.0.0.1:8000/games \
+  -H "Content-Type: application/json" \
+  -d '{"player_count": 12}'
+```
+
+### 使用 Qwen Agent 创建对局
+```bash
+curl -X POST http://127.0.0.1:8000/games \
+  -H "Content-Type: application/json" \
+  -d '{"player_count": 12, "agent_mode": "llm", "model": "qwen3.5-27b"}'
+```
+
+> `agent_mode="llm"` 需要本地 `.env` 或环境变量里设置 `DASHSCOPE_API_KEY`。默认 `scripted` 模式不会调用真实大模型。
+
 ### 运行一轮
 ```bash
 curl -X POST http://127.0.0.1:8000/games/{game_id}/run-cycle
@@ -71,6 +87,13 @@ curl -s -X POST http://127.0.0.1:8000/games/$GAME_ID/run-until-finished \
 # 4) 查看事件日志
 curl -s http://127.0.0.1:8000/games/$GAME_ID/events | python -m json.tool
 ```
+
+### Qwen smoke 脚本
+```bash
+.venv/bin/python scripts/qwen_smoke_game.py --model qwen3.5-27b --player-count 6 --cycles 1
+```
+
+脚本只在显式运行时调用真实模型，不会打印 API Key。为控制费用，默认只跑 6 人 1 轮。
 
 ## 配置大模型 API Key
 

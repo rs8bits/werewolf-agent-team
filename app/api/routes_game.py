@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
+from app.config.rule_config import RuleConfig, default_rule_config
 from app.db import get_db
 from app.services.game_session import GameSessionService
 
@@ -13,12 +16,20 @@ router = APIRouter(prefix="/games", tags=["games"])
 # ── Request schemas ────────────────────────────────────────────────────────
 
 class CreateGameRequest(BaseModel):
+    player_count: Literal[6, 12] = Field(default=6, description="玩家人数")
     player_names: list[str] | None = Field(
         default=None,
-        min_length=6,
-        max_length=6,
-        description="6 位玩家姓名（可选，默认 P1-P6）",
+        description="玩家姓名（可选，默认 P1...；长度必须等于 player_count）",
     )
+    agent_mode: Literal["scripted", "llm"] = Field(default="scripted")
+    model: str | None = Field(default=None, description="LLM 模型名，例如 qwen3.5-27b")
+    rule_config: dict[str, Any] | None = Field(default=None, description="规则配置覆盖")
+
+    @model_validator(mode="after")
+    def player_names_must_match_count(self) -> "CreateGameRequest":
+        if self.player_names is not None and len(self.player_names) != self.player_count:
+            raise ValueError("player_names length must equal player_count")
+        return self
 
 
 class RunUntilFinishedRequest(BaseModel):
@@ -32,9 +43,21 @@ def create_game(
     body: CreateGameRequest = CreateGameRequest(),
     db: Session = Depends(get_db),
 ):
-    """创建一局 6 人狼人杀对局（使用脚本 Agent）。"""
+    """创建一局狼人杀对局。默认使用脚本 Agent，可显式选择 LLM Agent。"""
     service = GameSessionService(db)
-    game_state = service.create_game(player_names=body.player_names)
+    rules = default_rule_config(body.player_count)
+    if body.rule_config:
+        rules = RuleConfig.model_validate({**rules.model_dump(), **body.rule_config})
+    try:
+        game_state = service.create_game(
+            player_names=body.player_names,
+            player_count=body.player_count,
+            agent_mode=body.agent_mode,
+            model=body.model,
+            rule_config=rules,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return game_state.model_dump()
 
 
@@ -55,7 +78,8 @@ def run_cycle(game_id: str, db: Session = Depends(get_db)):
     try:
         game_state = service.run_cycle(game_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        status = 400 if "DASHSCOPE_API_KEY" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc))
     return game_state.model_dump()
 
 
@@ -70,7 +94,8 @@ def run_until_finished(
     try:
         game_state = service.run_until_finished(game_id, max_cycles=body.max_cycles)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        status = 400 if "DASHSCOPE_API_KEY" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc))
     return game_state.model_dump()
 
 

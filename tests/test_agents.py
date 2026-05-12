@@ -9,6 +9,9 @@ from app.agents.base_agent import AgentDecisionError, BaseAgent, _build_user_mes
 from app.agents.factory import create_agent
 from app.agents.prompts import (
     BASE_SYSTEM_PROMPT,
+    GUARD_SYSTEM_PROMPT,
+    HUNTER_SYSTEM_PROMPT,
+    IDIOT_SYSTEM_PROMPT,
     SEER_SYSTEM_PROMPT,
     VILLAGER_SYSTEM_PROMPT,
     WEREWOLF_SYSTEM_PROMPT,
@@ -24,6 +27,9 @@ from app.agents.schemas import (
     WerewolfKillAction,
     WitchAction,
 )
+from app.agents.guard_agent import GuardAgent
+from app.agents.hunter_agent import HunterAgent
+from app.agents.idiot_agent import IdiotAgent
 from app.agents.werewolf_agent import WerewolfAgent
 from app.agents.seer_agent import SeerAgent
 from app.agents.witch_agent import WitchAgent
@@ -236,9 +242,10 @@ class TestPrompts:
         assert get_role_prompt(Role.witch) == WITCH_SYSTEM_PROMPT
         assert get_role_prompt(Role.villager) == VILLAGER_SYSTEM_PROMPT
 
-    def test_get_role_prompt_unsupported_role_raises(self):
-        with pytest.raises(ValueError, match="不支持的角色"):
-            get_role_prompt(Role.hunter)
+    def test_get_role_prompt_returns_extended_role_prompts(self):
+        assert get_role_prompt(Role.hunter) == HUNTER_SYSTEM_PROMPT
+        assert get_role_prompt(Role.idiot) == IDIOT_SYSTEM_PROMPT
+        assert get_role_prompt(Role.guard) == GUARD_SYSTEM_PROMPT
 
     def test_all_prompts_mention_no_cheating(self):
         for prompt in [
@@ -246,6 +253,9 @@ class TestPrompts:
             SEER_SYSTEM_PROMPT,
             WITCH_SYSTEM_PROMPT,
             VILLAGER_SYSTEM_PROMPT,
+            HUNTER_SYSTEM_PROMPT,
+            IDIOT_SYSTEM_PROMPT,
+            GUARD_SYSTEM_PROMPT,
         ]:
             assert "禁止作弊" in prompt or "不能声称知道" in prompt or "信息隔离" in prompt
 
@@ -255,6 +265,9 @@ class TestPrompts:
             SEER_SYSTEM_PROMPT,
             WITCH_SYSTEM_PROMPT,
             VILLAGER_SYSTEM_PROMPT,
+            HUNTER_SYSTEM_PROMPT,
+            IDIOT_SYSTEM_PROMPT,
+            GUARD_SYSTEM_PROMPT,
         ]:
             assert "JSON" in prompt
 
@@ -530,13 +543,14 @@ class TestAgentFactory:
         assert isinstance(agent, VillagerAgent)
         assert agent.role == Role.villager
 
-    def test_create_unsupported_role_raises(self):
-        with pytest.raises(ValueError, match="不支持的角色"):
-            create_agent(Role.hunter, self._dummy_client())
+    def test_create_extended_role_agents(self):
+        assert isinstance(create_agent(Role.hunter, self._dummy_client()), HunterAgent)
+        assert isinstance(create_agent(Role.idiot, self._dummy_client()), IdiotAgent)
+        assert isinstance(create_agent(Role.guard, self._dummy_client()), GuardAgent)
 
     def test_factory_creates_all_mvp_roles(self):
-        """Factory must be able to create all four MVP role agents."""
-        for role in [Role.werewolf, Role.seer, Role.witch, Role.villager]:
+        """Factory must be able to create all supported role agents."""
+        for role in [Role.werewolf, Role.seer, Role.witch, Role.villager, Role.hunter, Role.idiot, Role.guard]:
             agent = create_agent(role, self._dummy_client())
             assert agent.role == role
             # Verify it can run decide (even though the mock returns invalid JSON)

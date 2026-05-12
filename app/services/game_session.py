@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 
 from sqlalchemy.orm import Session
 
+from app.agents.factory import create_agent
 from app.agents.scripted_agent import ScriptedAgent
+from app.config.role_setups import get_role_setup
+from app.config.rule_config import RuleConfig, default_rule_config
+from app.config.settings import load_config
 from app.engine import initialize_game
 from app.graph.main_graph import (
     Agent,
@@ -12,6 +17,7 @@ from app.graph.main_graph import (
     run_until_finished,
 )
 from app.models import GameEvent, GameSession
+from app.llm.client import LLMClient
 from app.state.schemas import GameState
 
 
@@ -76,6 +82,15 @@ class GameSessionService:
 
     def _build_agents(self, game_state: GameState) -> dict[int, Agent]:
         agents: dict[int, Agent] = {}
+        if game_state.agent_mode == "llm":
+            config = load_config()
+            if game_state.model:
+                config = replace(config, model=game_state.model)
+            llm_client = LLMClient(config=config)
+            for p in game_state.players:
+                agents[p.seat_no] = create_agent(p.role, llm_client)
+            return agents
+
         for p in game_state.players:
             agents[p.seat_no] = ScriptedAgent(role=p.role)
         return agents
@@ -85,9 +100,29 @@ class GameSessionService:
     def create_game(
         self,
         player_names: list[str] | None = None,
+        player_count: int = 6,
+        agent_mode: str = "scripted",
+        model: str | None = None,
+        rule_config: RuleConfig | None = None,
     ) -> GameState:
+        if agent_mode not in {"scripted", "llm"}:
+            raise ValueError("agent_mode must be 'scripted' or 'llm'")
+        setup = get_role_setup(player_count)
+        rules = rule_config or default_rule_config(player_count)
+        if agent_mode == "llm":
+            config = load_config()
+            if model:
+                config = replace(config, model=model)
+            LLMClient(config=config)
         game_id = _short_uuid()
-        game_state = initialize_game(game_id, player_names=player_names)
+        game_state = initialize_game(
+            game_id,
+            setup,
+            player_names=player_names,
+            rule_config=rules,
+            agent_mode=agent_mode,
+            model=model,
+        )
         self._save_game_and_events(game_state)
         return game_state
 

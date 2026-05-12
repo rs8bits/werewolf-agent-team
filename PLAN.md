@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 3 API 与日志持久化已完成 |
+| 项目阶段 | 里程碑 4/5 规则扩展与 Qwen Agent 模式已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -313,20 +313,33 @@ Runner 核心约定：
 - 不写入任何真实 API Key
 - 不做前端 UI，不做实时广播系统
 
-### 里程碑 4：12 人标准板（预女猎白）
+### 里程碑 4：12 人标准板（预女猎白） ✅
 
-**目标**：支持经典 12 人标准板，角色齐全。
+**状态**：已完成 12 人标准板与猎人/白痴机制。
 
-- 新增角色 Agent：猎人、白痴
-- 新增规则：猎人开枪、白痴翻牌
-- 板子配置系统（可通过配置文件切换板子）
+已交付：
+- `get_role_setup(12)` / `twelve_player_setup()` — 4 狼 / 预言家 / 女巫 / 猎人 / 白痴 / 4 平民
+- `HunterAgent` / `IdiotAgent` — 真实 LLM Agent 子类与中文提示词
+- 猎人死亡开枪，女巫毒死默认不能开枪
+- 白痴被投票放逐时翻牌，不死亡但失去投票权
+- 12 人 API 创建与脚本 Agent 一轮运行测试
 
-### 里程碑 5：扩展角色与机制
+### 里程碑 5：扩展角色与机制 ✅
 
-- 守卫 Agent
-- 警长竞选机制
-- 平票 PK 机制
-- 女巫首夜自救、守卫自守/连守等规则细项可配置
+**状态**：已完成规则配置、守卫、警长、平票 PK 与 Qwen Agent 模式。
+
+已交付：
+- `RuleConfig` — 可持久化规则细项，支持警长、平票 PK、女巫药品、守卫约束、猎人被毒是否可开枪、白痴翻牌
+- `RuntimeState` — 持久化女巫药品消耗、预言家查验历史、守卫上一晚目标、猎人开枪状态、白痴翻牌状态
+- `GuardAgent` 与 `guard_protect` 动作
+- 警长竞选、警长票权、警徽移交/撕毁事件
+- 平票 PK：`pk_started`、`pk_speech`、`pk_vote_cast`、`pk_resolved`
+- `agent_mode="llm"`：API 可选择真实 Qwen Agent，支持 `model="qwen3.5-27b"`
+- `scripts/qwen_smoke_game.py` — 显式运行的 Qwen smoke 测试入口
+
+验证：
+- `.venv/bin/python -m pytest`：266 个测试通过
+- 默认测试不调用真实 LLM；只有显式选择 `agent_mode="llm"` 或运行 smoke 脚本才会调用百炼/Qwen
 
 ### 里程碑 6：人机混战
 

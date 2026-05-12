@@ -32,6 +32,8 @@ class PlayerView(BaseModel):
     own_role: Role
     own_camp: Camp
     known_wolf_team: list[int] = Field(default_factory=list)
+    sheriff_seat_no: int | None = Field(default=None, ge=1)
+    private_info: dict[str, Any] = Field(default_factory=dict)
     available_actions: list[str] = Field(default_factory=list)
 
 
@@ -43,7 +45,10 @@ def _night_actions(role: Role) -> list[str]:
         Role.werewolf: ["werewolf_kill"],
         Role.seer: ["seer_check"],
         Role.witch: ["witch_save", "witch_poison"],
+        Role.guard: ["guard_protect"],
         Role.villager: [],
+        Role.hunter: [],
+        Role.idiot: [],
     }
     return mapping.get(role, [])
 
@@ -77,7 +82,78 @@ def _find_player(game_state: GameState, seat_no: int):
     )
 
 
-def build_player_view(game_state: GameState, seat_no: int) -> PlayerView:
+_PRIVATE_EVENT_TYPES = {"night_action", "night_kill_info"}
+
+
+def _sanitize_public_event(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("type") == "night_resolved":
+        return {
+            key: value
+            for key, value in event.items()
+            if key not in {"seer_result", "death_reasons"}
+        }
+    return dict(event)
+
+
+def _visible_public_events(game_state: GameState) -> list[dict[str, Any]]:
+    return [
+        _sanitize_public_event(event)
+        for event in game_state.public_state.public_events
+        if event.get("private") is not True and event.get("type") not in _PRIVATE_EVENT_TYPES
+    ]
+
+
+def _private_info(game_state: GameState, seat_no: int, role: Role) -> dict[str, Any]:
+    runtime = game_state.runtime_state
+    info: dict[str, Any] = {
+        "sheriff_seat_no": game_state.sheriff_seat_no,
+        "idiot_revealed": seat_no in runtime.idiot_revealed_seats,
+    }
+
+    if role == Role.seer:
+        info["seer_checks"] = [
+            {
+                "round": record.round,
+                "target_seat_no": record.target_seat_no,
+                "result": record.result.value,
+            }
+            for record in runtime.seer_checks
+            if record.seer_seat_no == seat_no
+        ]
+
+    if role == Role.witch:
+        info.update(
+            {
+                "pending_wolf_kill_target": runtime.pending_wolf_kill_target,
+                "witch_save_available": not runtime.witch_save_used,
+                "witch_poison_available": not runtime.witch_poison_used,
+            }
+        )
+
+    if role == Role.guard:
+        info.update(
+            {
+                "guard_last_target": runtime.guard_last_target,
+                "guard_can_self_guard": game_state.rule_config.guard_can_self_guard,
+                "guard_can_guard_same_target_consecutively": (
+                    game_state.rule_config.guard_can_guard_same_target_consecutively
+                ),
+            }
+        )
+
+    if role == Role.hunter:
+        info["hunter_can_shoot"] = seat_no not in runtime.hunter_shot_used_seats
+
+    return info
+
+
+def build_player_view(
+    game_state: GameState,
+    seat_no: int,
+    *,
+    available_actions_override: list[str] | None = None,
+    private_info_override: dict[str, Any] | None = None,
+) -> PlayerView:
     viewer = _find_player(game_state, seat_no)
 
     visible_players = [
@@ -101,6 +177,18 @@ def build_player_view(game_state: GameState, seat_no: int) -> PlayerView:
         alive=viewer.status.alive,
         can_vote=viewer.status.can_vote,
     )
+    if viewer.role == Role.witch:
+        if game_state.rule_config.witch_save_once and game_state.runtime_state.witch_save_used:
+            actions = [action for action in actions if action != "witch_save"]
+        if game_state.rule_config.witch_poison_once and game_state.runtime_state.witch_poison_used:
+            actions = [action for action in actions if action != "witch_poison"]
+
+    if available_actions_override is not None:
+        actions = available_actions_override
+
+    private_info = _private_info(game_state, seat_no, viewer.role)
+    if private_info_override:
+        private_info.update(private_info_override)
 
     return PlayerView(
         game_id=game_state.game_id,
@@ -108,9 +196,11 @@ def build_player_view(game_state: GameState, seat_no: int) -> PlayerView:
         round=game_state.public_state.round,
         phase=game_state.public_state.phase,
         players=visible_players,
-        public_events=list(game_state.public_state.public_events),
+        public_events=_visible_public_events(game_state),
         own_role=viewer.role,
         own_camp=viewer.camp,
         known_wolf_team=known_wolf_team,
+        sheriff_seat_no=game_state.sheriff_seat_no,
+        private_info=private_info,
         available_actions=actions,
     )

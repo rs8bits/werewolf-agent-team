@@ -10,7 +10,7 @@ def check_winner(game_state: GameState) -> Camp | None:
     if not alive_werewolves:
         return Camp.good
 
-    gods = {Role.seer, Role.witch}
+    gods = {Role.seer, Role.witch, Role.hunter, Role.idiot, Role.guard}
     all_gods_dead = not any(
         p.status.alive and p.role in gods for p in game_state.players
     )

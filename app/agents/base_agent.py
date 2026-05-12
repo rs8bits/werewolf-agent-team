@@ -33,6 +33,9 @@ def _build_user_message(view: PlayerView) -> str:
         "seer": "预言家",
         "witch": "女巫",
         "villager": "平民",
+        "hunter": "猎人",
+        "idiot": "白痴",
+        "guard": "守卫",
     }
     camp_names = {
         "werewolf": "狼人阵营",
@@ -70,6 +73,11 @@ def _build_user_message(view: PlayerView) -> str:
         lines.append("## 公共事件")
         for event in view.public_events:
             lines.append(f"- {json.dumps(event, ensure_ascii=False)}")
+
+    if view.private_info:
+        lines.append("")
+        lines.append("## 你的私有信息")
+        lines.append(json.dumps(view.private_info, ensure_ascii=False))
 
     lines.append("")
     lines.append("## 可执行动作")
@@ -117,6 +125,46 @@ def _action_schema_hints(available_actions: list[str]) -> str:
         elif action == ActionType.witch_poison.value:
             hints.append(
                 '- witch_poison: {"action_type": "witch_poison", "target_seat_no": <目标座位号>}'
+            )
+        elif action == ActionType.hunter_shoot.value:
+            hints.append(
+                '- hunter_shoot: {"action_type": "hunter_shoot", "target_seat_no": <目标座位号>}'
+            )
+        elif action == ActionType.guard_protect.value:
+            hints.append(
+                '- guard_protect: {"action_type": "guard_protect", "target_seat_no": <目标座位号>}'
+            )
+        elif action == ActionType.run_for_sheriff.value:
+            hints.append(
+                '- run_for_sheriff: {"action_type": "run_for_sheriff", "run": true或false}'
+            )
+        elif action == ActionType.sheriff_vote.value:
+            hints.append(
+                '- sheriff_vote: {"action_type": "sheriff_vote", "target_seat_no": <候选人座位号或null表示弃票>}'
+            )
+        elif action == ActionType.sheriff_assign.value:
+            hints.append(
+                '- sheriff_assign: {"action_type": "sheriff_assign", "target_seat_no": <移交警徽的座位号>}'
+            )
+        elif action == ActionType.hunter_shoot.value:
+            hints.append(
+                '- hunter_shoot: {"action_type": "hunter_shoot", "target_seat_no": <目标座位号>}'
+            )
+        elif action == ActionType.guard_protect.value:
+            hints.append(
+                '- guard_protect: {"action_type": "guard_protect", "target_seat_no": <目标座位号>}'
+            )
+        elif action == ActionType.run_for_sheriff.value:
+            hints.append(
+                '- run_for_sheriff: {"action_type": "run_for_sheriff", "run": true}'
+            )
+        elif action == ActionType.sheriff_vote.value:
+            hints.append(
+                '- sheriff_vote: {"action_type": "sheriff_vote", "target_seat_no": <座位号或null表示弃票>}'
+            )
+        elif action == ActionType.sheriff_assign.value:
+            hints.append(
+                '- sheriff_assign: {"action_type": "sheriff_assign", "target_seat_no": <目标座位号>}'
             )
 
     action_list = "\n".join(hints)

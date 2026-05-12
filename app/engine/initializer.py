@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.config.rule_config import RuleConfig, default_rule_config
 from app.config.role_setups import RoleSetup, six_player_setup
 from app.state.schemas import (
     GamePhase,
@@ -21,8 +22,12 @@ def initialize_game(
     *,
     player_names: Sequence[str] | None = None,
     player_types: Sequence[PlayerType] | None = None,
+    rule_config: RuleConfig | None = None,
+    agent_mode: str = "scripted",
+    model: str | None = None,
 ) -> GameState:
     role_setup = setup or six_player_setup()
+    rules = rule_config or default_rule_config(role_setup.player_count)
     seat_configs = role_setup.seat_configs()
 
     if player_names is not None and len(player_names) != role_setup.player_count:
@@ -56,6 +61,9 @@ def initialize_game(
 
     return GameState(
         game_id=game_id,
+        agent_mode=agent_mode,
+        model=model,
+        rule_config=rules,
         public_state=PublicState(
             round=0,
             phase=GamePhase.setup,
