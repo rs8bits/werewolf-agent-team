@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 2C-3 基础 Agent 输出结构与中文 LLM 调用已完成 |
+| 项目阶段 | 里程碑 2C-4 Runner / LangGraph 雏形已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -253,6 +253,24 @@ Agent 调用约定：
 - `_build_user_message()` 仅序列化 `PlayerView` 字段，信息隔离由设计保证
 - 所有角色提示词使用中文，要求返回 JSON、发言内容中文、不声称知道不可见身份
 
+### 里程碑 2C-4：Runner / LangGraph 雏形 ✅
+
+**状态**：已完成 6 人局对局 runner 与 LangGraph 主流程雏形。
+
+已交付：
+- `app/graph/main_graph.py` — Runner 核心模块：Phase 函数（`run_night_phase`、`run_day_phase`、`run_vote_phase`）、循环函数（`run_one_cycle`、`run_until_finished`）、LangGraph 图构建（`build_main_graph` + `GraphState` TypedDict）
+- `app/graph/__init__.py` — 统一导出 runner 公共接口
+- `tests/test_runner.py` — 覆盖夜晚狼杀/女巫救/女巫毒、狼人多数票+平票打破、白天中文发言事件、投票放逐/平票不放逐、胜负终局 phase=ended、信息隔离验证、LangGraph 编译/调用
+
+Runner 核心约定：
+- 所有阶段函数接受 `GameState` + `dict[int, Agent]`，Agent 只需实现 `decide(view: PlayerView) -> AgentDecision` 协议
+- 夜晚阶段：依次收集狼人击杀（多数票，平票取最小座位号）→ 预言家查验 → 女巫救/毒（女巫通过公共事件获知被杀目标），调用 `resolve_night()` 结算，写入 `night_resolved` 事件
+- 白天阶段：存活玩家按座位顺序发言，每条发言写入 `speech` 事件（含 `seat_no`、`content`、`reasoning_summary`）
+- 投票阶段：存活且可投票玩家依次投票，调用 `tally_votes()` + `apply_vote_result()`，写入 `vote_cast` + `vote_resolved` 事件
+- 每阶段结束后调用 `check_winner()`，若胜负已定则 `phase=ended`
+- LangGraph `build_main_graph()` 返回可编译/调用的 StateGraph（nodes: night/day/vote，conditional routing: night→day→vote→night|ended）
+- 测试全部使用 FakeAgent 脚本 Agent，不调用真实 LLM
+
 ### 里程碑 2：6 人局 MVP
 
 **目标**：跑通完整狼人杀对局流程的最小闭环。
@@ -260,13 +278,13 @@ Agent 调用约定：
 - ✅ 实现 `GameState` schema（`PublicState`、`TruthState`）- 已在 2B 完成
 - ✅ 实现 `ViewBuilder`，按玩家身份构建可见视图 - 已在 2C-1 完成
 - ✅ 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）- 已在 2C-2 完成
-- 实现 LangGraph 主流程图（夜晚子图 + 白天子图）
+- ✅ 实现 LangGraph 主流程图（夜晚子图 + 白天子图）- 已在 2C-4 完成
 - ✅ 实现基础 Agent（狼人、预言家、女巫、平民）- 已在 2C-3 完成
 - ✅ 接入百炼 `qwen-plus` 模型 - 已在 2A 完成
-- 实现结构化日志记录
+- ✅ 实现结构化日志记录 - 已在 2C-4 完成（公共事件写入）
 - ✅ 创建 `.env.example` - 已在 2A 完成
 
-**下一步建议（里程碑 2C-4）**：LangGraph 主流程编排（夜晚子图 + 白天子图），实现 6 人局完整对局 runner，串联 Agent 决策 → 规则引擎结算 → 状态更新。
+**下一步建议（里程碑 3）**：API 层与日志持久化 — 通过 FastAPI 暴露对局接口，支持 HTTP 创建/查看对局，WebSocket 实时推送对局事件，数据库模型（SQLAlchemy + SQLite），对局日志持久化。
 
 注意：所有 Agent 提示词和发言内容均使用中文，后续 Agent 扩展（猎人、白痴、守卫等）也必须遵循此约定。
 
