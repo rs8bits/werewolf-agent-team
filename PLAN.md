@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 2C-2 规则引擎 MVP 已完成 |
+| 项目阶段 | 里程碑 2C-3 基础 Agent 输出结构与中文 LLM 调用已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -232,6 +232,27 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - 同玩家被杀且被毒只生成一次死亡事件
 - 女巫救中狼人杀目标则该玩家不死
 
+### 里程碑 2C-3：基础 Agent 输出结构与中文 LLM 调用 ✅
+
+**状态**：已完成各身份 Agent 的结构化输出、中文提示词、Mock LLM 测试。
+
+已交付：
+- `app/agents/schemas.py` — Agent 决策 Pydantic schema（`ActionType` enum、`SpeakAction`、`VoteAction`、`WerewolfKillAction`、`SeerCheckAction`、`WitchAction`、`AgentDecision` 判别联合体）
+- `app/agents/prompts.py` — 中文系统提示词模块（基础提示词 + 狼人/预言家/女巫/平民角色提示词），所有提示词使用中文，强调信息隔离与 JSON 输出
+- `app/agents/base_agent.py` — `BaseAgent` 基类，接收 `LLMClient` + `PlayerView`，构造中文 messages，调 `chat_json(...)`，解析 JSON 为 `AgentDecision`，校验动作在 `available_actions` 中，校验失败抛 `AgentDecisionError`
+- `app/agents/werewolf_agent.py` — 狼人 Agent（继承 `BaseAgent`）
+- `app/agents/seer_agent.py` — 预言家 Agent（继承 `BaseAgent`）
+- `app/agents/witch_agent.py` — 女巫 Agent（继承 `BaseAgent`）
+- `app/agents/villager_agent.py` — 平民 Agent（继承 `BaseAgent`）
+- `app/agents/factory.py` — Agent 工厂，根据 `Role` 创建对应 Agent 实例，不支持角色抛 `ValueError`
+- `app/agents/__init__.py` — 统一导出公共类
+- `tests/test_agents.py` — 覆盖 schema 序列化、中文提示词断言、Mock LLM 合法/非法 JSON、动作不在可用空间被拒绝、prompt 不含 truth_state、factory 四种 MVP 角色、中文发言内容
+
+Agent 调用约定：
+- Agent 输入仅使用 `PlayerView`，不直接读取 `GameState` / `TruthState`
+- `_build_user_message()` 仅序列化 `PlayerView` 字段，信息隔离由设计保证
+- 所有角色提示词使用中文，要求返回 JSON、发言内容中文、不声称知道不可见身份
+
 ### 里程碑 2：6 人局 MVP
 
 **目标**：跑通完整狼人杀对局流程的最小闭环。
@@ -240,12 +261,14 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - ✅ 实现 `ViewBuilder`，按玩家身份构建可见视图 - 已在 2C-1 完成
 - ✅ 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）- 已在 2C-2 完成
 - 实现 LangGraph 主流程图（夜晚子图 + 白天子图）
-- 实现基础 Agent（狼人、预言家、女巫、平民）
+- ✅ 实现基础 Agent（狼人、预言家、女巫、平民）- 已在 2C-3 完成
 - ✅ 接入百炼 `qwen-plus` 模型 - 已在 2A 完成
 - 实现结构化日志记录
 - ✅ 创建 `.env.example` - 已在 2A 完成
 
-**下一步建议（里程碑 2C-3）**：基础 Agent 输出结构 / LLM Agent 调用，实现各身份 Agent 的结构化输出与角色推理。
+**下一步建议（里程碑 2C-4）**：LangGraph 主流程编排（夜晚子图 + 白天子图），实现 6 人局完整对局 runner，串联 Agent 决策 → 规则引擎结算 → 状态更新。
+
+注意：所有 Agent 提示词和发言内容均使用中文，后续 Agent 扩展（猎人、白痴、守卫等）也必须遵循此约定。
 
 ### 里程碑 3：API 与日志
 
