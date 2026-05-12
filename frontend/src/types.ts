@@ -1,0 +1,55 @@
+export type GamePhase = "setup" | "night" | "day" | "vote" | "ended";
+export type AgentMode = "scripted" | "llm";
+export type Camp = "werewolf" | "good";
+
+export interface PlayerStatus {
+  alive: boolean;
+  can_vote: boolean;
+}
+
+export interface PlayerState {
+  seat_no: number;
+  name: string;
+  player_type: "ai" | "human";
+  role: string;
+  camp: Camp;
+  status: PlayerStatus;
+}
+
+export interface PublicState {
+  round: number;
+  phase: GamePhase;
+  alive_players: number[];
+  dead_players: number[];
+  public_events: GameEventPayload[];
+}
+
+export interface GameEventPayload {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface PersistedEvent {
+  sequence: number;
+  event: GameEventPayload;
+  created_at: string | null;
+}
+
+export interface GameState {
+  game_id: string;
+  agent_mode?: AgentMode;
+  model?: string | null;
+  rule_config?: Record<string, unknown>;
+  public_state: PublicState;
+  players: PlayerState[];
+  truth_state?: Record<string, unknown>;
+  runtime_state?: Record<string, unknown>;
+  sheriff_seat_no?: number | null;
+  winner?: Camp | null;
+}
+
+export interface CreateGameRequest {
+  player_count: 6 | 12;
+  agent_mode: AgentMode;
+  model?: string | null;
+}

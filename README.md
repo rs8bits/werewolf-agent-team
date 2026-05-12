@@ -116,3 +116,23 @@ curl -s http://127.0.0.1:8000/games/$GAME_ID/events | python -m json.tool
 ```bash
 .venv/bin/python -m pytest
 ```
+
+## 前端观战台
+
+```bash
+# 后端（前端默认连接 8001）
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
+
+# 前端
+cd frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+打开：http://127.0.0.1:5173
+
+如需连接其他后端地址：
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 5173
+```
