@@ -179,7 +179,7 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 
 ### 里程碑 2B：核心领域模型与 6 人板子配置 ✅
 
-**状态**：已完成核心数据结构与预设板配置，等待里程碑 2C（规则引擎 MVP / View Builder）。
+**状态**：已完成核心数据结构与预设板配置。
 
 已交付：
 - `app/state/schemas.py` — 核心领域模型（`Camp`、`Role`、`GamePhase`、`PlayerType`、`PlayerStatus`、`PlayerState`、`PublicState`、`TruthState`、`GameState`），全部使用 Pydantic v2
@@ -189,12 +189,33 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - `tests/test_persona_config.py` — 默认值校验、范围校验、自定义配置测试
 - `tests/test_role_setups.py` — 6 人局角色数量、座位生成、不支持人数报错测试
 
+### 里程碑 2C-1：信息隔离 View Builder ✅
+
+**状态**：已完成私有视图构建器，支持 6 人局 MVP 的严格信息隔离。
+
+已交付：
+- `app/state/view_builder.py` — Pydantic 视图模型（`VisiblePlayer`、`PlayerView`）与 `build_player_view()` 构建函数
+- `tests/test_view_builder.py` — 覆盖狼人视图、好人隔离、公开信息不含身份、无效座位号、各 phase/role 动作空间、序列化无 truth_state 泄露
+
+信息隔离保证：
+- 狼人可见 `known_wolf_team`（狼队成员）
+- 好人 `known_wolf_team` 永远为空
+- `VisiblePlayer` 不暴露角色和阵营
+- `PlayerView` 不含 `truth_state`
+- 无效座位号抛出 `ValueError`
+
+`available_actions` 最小规则：
+- `setup` / `ended`：空
+- `night`：狼人 `["werewolf_kill"]`，预言家 `["seer_check"]`，女巫 `["witch_save", "witch_poison"]`，平民空
+- `day`：`["speak"]`
+- `vote`：存活且可投票 `["vote"]`，否则空
+
 ### 里程碑 2：6 人局 MVP
 
 **目标**：跑通完整狼人杀对局流程的最小闭环。
 
 - ✅ 实现 `GameState` schema（`PublicState`、`TruthState`）- 已在 2B 完成
-- 实现 `ViewBuilder`，按玩家身份构建可见视图
+- ✅ 实现 `ViewBuilder`，按玩家身份构建可见视图 - 已在 2C-1 完成
 - 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）
 - 实现 LangGraph 主流程图（夜晚子图 + 白天子图）
 - 实现基础 Agent（狼人、预言家、女巫、平民）
@@ -202,7 +223,7 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - 实现结构化日志记录
 - ✅ 创建 `.env.example` - 已在 2A 完成
 
-**下一步建议（里程碑 2C）**：规则引擎 MVP + View Builder，实现夜间结算、投票放逐、胜负判定，并为每个玩家构建私有可见视图。
+**下一步建议（里程碑 2C-2）**：规则引擎 MVP，实现夜间结算、投票放逐、胜负判定。
 
 ### 里程碑 3：API 与日志
 
