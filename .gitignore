@@ -10,6 +10,10 @@ dist/
 build/
 *.egg-info/
 TEMP_TASK_*.md
+data/
+*.db
+*.db-wal
+*.db-shm
 .env
 .env.local
 .env.*.local

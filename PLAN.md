@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 2C-4 Runner / LangGraph 雏形已完成 |
+| 项目阶段 | 里程碑 3 API 与日志持久化已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -284,18 +284,34 @@ Runner 核心约定：
 - ✅ 实现结构化日志记录 - 已在 2C-4 完成（公共事件写入）
 - ✅ 创建 `.env.example` - 已在 2A 完成
 
-**下一步建议（里程碑 3）**：API 层与日志持久化 — 通过 FastAPI 暴露对局接口，支持 HTTP 创建/查看对局，WebSocket 实时推送对局事件，数据库模型（SQLAlchemy + SQLite），对局日志持久化。
+**下一步建议（里程碑 4）**：12 人标准板（预女猎白）—— 新增猎人、白痴角色 Agent 和对应规则机制。
 
 注意：所有 Agent 提示词和发言内容均使用中文，后续 Agent 扩展（猎人、白痴、守卫等）也必须遵循此约定。
 
-### 里程碑 3：API 与日志
+### 里程碑 3：API 与日志 ✅
+
+**状态**：已完成 API 层与日志持久化。
 
 **目标**：通过 FastAPI 暴露对局接口，支持 HTTP 创建/查看对局。
 
-- REST API：创建对局、查询对局状态、获取日志
-- WebSocket：实时推送对局事件
-- 数据库模型（SQLAlchemy + SQLite）
-- 对局日志持久化
+已交付：
+- `app/db.py` — SQLAlchemy 引擎与 session 工厂，默认 SQLite `data/werewolf.db`
+- `app/models.py` — ORM 模型（`GameSession`、`GameEvent`）
+- `app/agents/scripted_agent.py` — 脚本 Agent（不调用 LLM，基于 `PlayerView` 做规则决策，支持 night/day/vote，中文发言）
+- `app/services/game_session.py` — `GameSessionService`：`create_game`、`get_game`、`run_cycle`、`run_until_finished`、`list_events`
+- `app/api/routes_game.py` — REST 路由：`POST /games`、`GET /games/{id}`、`POST /games/{id}/run-cycle`、`POST /games/{id}/run-until-finished`、`GET /games/{id}/events`
+- `app/api/websocket.py` — WebSocket 端点 `GET/WS /ws/games/{id}/events`，连接后发送事件快照
+- `app/main.py` — 更新 lifespan 自动建表，include router
+- `.gitignore` — 新增 `data/`、`*.db`、`*.db-wal`、`*.db-shm`
+- `tests/test_game_session_service.py` — 测试 service 层 CRUD、run_cycle、run_until_finished、事件持久化
+- `tests/test_game_api.py` — 测试 FastAPI 路由（创建/查询/run-cycle/run-until-finished/events）
+- `README.md` — 更新 API 体验文档
+
+约定：
+- 测试使用临时 SQLite（`:memory:`），不污染项目默认 `data/`
+- 不调用真实百炼/Qwen
+- 不写入任何真实 API Key
+- 不做前端 UI，不做实时广播系统
 
 ### 里程碑 4：12 人标准板（预女猎白）
 
