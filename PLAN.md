@@ -4,7 +4,7 @@
 
 | 项目 | 状态 |
 |------|------|
-| 项目阶段 | 里程碑 2A 百炼/Qwen 大模型接入层已完成 |
+| 项目阶段 | 里程碑 2B 核心领域模型与 6 人板子配置已完成 |
 | 最新提交 | 以 `git log -1 --oneline` 为准 |
 | 分支 | `main` |
 | 可运行 | 是（`uvicorn app.main:app --reload` 可启动，`pytest` 通过） |
@@ -33,6 +33,13 @@
 - `app/llm/client.py` 封装 OpenAI-compatible 客户端，惰性初始化，不在 import 时发起网络请求
 - `.env.example` 提供本地配置模板，不包含真实密钥
 - `tests/test_settings.py` / `tests/test_llm_client.py` 覆盖配置读取、缺失密钥错误、mock 模型调用
+
+### 里程碑 2B：核心领域模型与 6 人板子配置
+
+- `app/state/schemas.py` 定义核心领域模型与角色阵营映射
+- `app/config/persona_config.py` 定义 `PersonaProfile` 能力画像
+- `app/config/role_setups.py` 定义 6 人局预设板子与座位配置
+- `tests/test_schemas.py` / `tests/test_persona_config.py` / `tests/test_role_setups.py` 覆盖核心模型、画像和板子配置
 
 ### 目录结构
 
@@ -156,7 +163,7 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 
 ### 里程碑 2A：百炼/Qwen 大模型接入层 ✅
 
-**状态**：已完成基础接入层，等待里程碑 2B（Agent / 规则引擎）。
+**状态**：已完成基础接入层。
 
 已交付：
 - `app/config/settings.py` — 配置模块，从环境变量 / `.env` 读取 DashScope 配置
@@ -170,18 +177,32 @@ DASHSCOPE_TIMEOUT_SECONDS=60
 - 真实 `DASHSCOPE_API_KEY` 仅存于本地 `.env`，禁止提交
 - 新开发者复制 `.env.example` 为 `.env` 后填入自己的 Key
 
+### 里程碑 2B：核心领域模型与 6 人板子配置 ✅
+
+**状态**：已完成核心数据结构与预设板配置，等待里程碑 2C（规则引擎 MVP / View Builder）。
+
+已交付：
+- `app/state/schemas.py` — 核心领域模型（`Camp`、`Role`、`GamePhase`、`PlayerType`、`PlayerStatus`、`PlayerState`、`PublicState`、`TruthState`、`GameState`），全部使用 Pydantic v2
+- `app/config/persona_config.py` — `PersonaProfile` 能力画像模型（intelligence / memory / experience / rhetoric / risk_appetite / discipline / model / context_window / reasoning_budget），含默认值与范围校验
+- `app/config/role_setups.py` — 6 人局预设板子（2 狼人 / 1 预言家 / 1 女巫 / 2 平民），提供 `get_role_setup()` / `six_player_setup()` / `SeatConfig` / `RoleSetup` 结构化对象
+- `tests/test_schemas.py` — Role↔Camp 映射、GameState 6 人初始化、序列化测试
+- `tests/test_persona_config.py` — 默认值校验、范围校验、自定义配置测试
+- `tests/test_role_setups.py` — 6 人局角色数量、座位生成、不支持人数报错测试
+
 ### 里程碑 2：6 人局 MVP
 
 **目标**：跑通完整狼人杀对局流程的最小闭环。
 
-- 实现 `GameState` schema（`PublicState`、`PrivateState`、`TruthState`）
+- ✅ 实现 `GameState` schema（`PublicState`、`TruthState`）- 已在 2B 完成
 - 实现 `ViewBuilder`，按玩家身份构建可见视图
 - 实现 6 人局规则引擎（身份分配、夜晚结算、投票放逐、胜负判定）
 - 实现 LangGraph 主流程图（夜晚子图 + 白天子图）
 - 实现基础 Agent（狼人、预言家、女巫、平民）
-- 接入百炼 `qwen-plus` 模型
+- ✅ 接入百炼 `qwen-plus` 模型 - 已在 2A 完成
 - 实现结构化日志记录
-- 创建 `.env.example`
+- ✅ 创建 `.env.example` - 已在 2A 完成
+
+**下一步建议（里程碑 2C）**：规则引擎 MVP + View Builder，实现夜间结算、投票放逐、胜负判定，并为每个玩家构建私有可见视图。
 
 ### 里程碑 3：API 与日志
 
