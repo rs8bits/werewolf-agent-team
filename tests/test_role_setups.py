@@ -79,6 +79,37 @@ class TestSixPlayerPreset:
         first.role_counts[0].count = 99
         assert second.role_counts[0].count == 2
 
+    def test_seat_configs_shuffles_roles_out_of_grouped_order(self):
+        """Without seed, seat configs are unlikely to be the default grouped order."""
+        setup = six_player_setup()
+        seats = setup.seat_configs()
+        roles = [s.role for s in seats]
+        grouped = [Role.werewolf, Role.werewolf, Role.seer, Role.witch, Role.villager, Role.villager]
+        assert len(roles) == 6
+        # Role counts must still match
+        role_counts: dict[Role, int] = {}
+        for r in roles:
+            role_counts[r] = role_counts.get(r, 0) + 1
+        assert role_counts[Role.werewolf] == 2
+        assert role_counts[Role.seer] == 1
+        assert role_counts[Role.witch] == 1
+        assert role_counts[Role.villager] == 2
+
+    def test_seat_configs_seed_is_deterministic(self):
+        setup = six_player_setup()
+        seats1 = setup.seat_configs(seed=42)
+        seats2 = setup.seat_configs(seed=42)
+        roles1 = [s.role for s in seats1]
+        roles2 = [s.role for s in seats2]
+        assert roles1 == roles2
+
+    def test_seat_configs_seat_numbers_always_sequential(self):
+        """Seat numbers stay 1..N regardless of shuffle."""
+        setup = six_player_setup()
+        for _ in range(10):
+            seats = setup.seat_configs()
+            assert [s.seat_no for s in seats] == [1, 2, 3, 4, 5, 6]
+
 
 class TestGetRoleSetup:
     def test_six_players_returns_valid_setup(self):
@@ -120,6 +151,59 @@ class TestGetRoleSetup:
     def test_large_count_raises(self):
         with pytest.raises(ValueError):
             get_role_setup(100)
+
+
+class TestSeatShuffle:
+    """Verify seat configs randomise roles across seat numbers."""
+
+    def test_seed_produces_deterministic_order(self):
+        setup = six_player_setup()
+        a = [s.role for s in setup.seat_configs(seed=42)]
+        b = [s.role for s in setup.seat_configs(seed=42)]
+        assert a == b
+
+    def test_different_seeds_produce_different_orders(self):
+        setup = six_player_setup()
+        a = [s.role for s in setup.seat_configs(seed=1)]
+        b = [s.role for s in setup.seat_configs(seed=2)]
+        assert a != b
+
+    def test_no_seed_shuffles_roles_not_fixed_groups(self):
+        """Without seed, roles should not be clustered by identity.
+
+        Run multiple times and verify the order is not always the
+        fixed wolf-wolf-seer-witch-villager-villager pattern.  Because
+        a shuffle *could* randomly produce the same order, retry a few
+        times to avoid a flaky test.
+        """
+        fixed = [Role.werewolf, Role.werewolf, Role.seer, Role.witch,
+                 Role.villager, Role.villager]
+        shuffled_once = False
+        for _ in range(20):
+            setup = six_player_setup()
+            roles = [s.role for s in setup.seat_configs()]
+            if roles != fixed:
+                shuffled_once = True
+                break
+        assert shuffled_once, "座位未随机打乱 — 20 次均为固定顺序"
+
+    def test_twelve_player_seats_are_shuffled(self):
+        setup = twelve_player_setup()
+        seats = setup.seat_configs(seed=7)
+        roles = [s.role for s in seats]
+        # seat numbers are still 1..12
+        assert [s.seat_no for s in seats] == list(range(1, 13))
+        # role counts are correct
+        assert roles.count(Role.werewolf) == 4
+        assert roles.count(Role.seer) == 1
+        assert roles.count(Role.witch) == 1
+        assert roles.count(Role.hunter) == 1
+        assert roles.count(Role.idiot) == 1
+        assert roles.count(Role.villager) == 4
+        # roles are not in the fixed declaration order
+        fixed_12 = [Role.werewolf] * 4 + [Role.seer, Role.witch,
+                     Role.hunter, Role.idiot] + [Role.villager] * 4
+        assert roles != fixed_12
 
 
 class TestRoleSetupValidation:

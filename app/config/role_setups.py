@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 from pydantic import BaseModel, Field, model_validator
 
 from app.state.schemas import PlayerType, Role
@@ -30,17 +32,28 @@ class RoleSetup(BaseModel):
         return self
 
     def seat_configs(
-        self, player_type: PlayerType = PlayerType.ai
+        self,
+        player_type: PlayerType = PlayerType.ai,
+        *,
+        seed: int | None = None,
     ) -> list[SeatConfig]:
-        seats: list[SeatConfig] = []
-        seat_no = 1
+        """Generate seat configs with roles randomly shuffled across seat numbers.
+
+        Seat numbers are always sequential 1..N; only the role assignment is
+        randomised so wolves / gods / villagers are not grouped by identity.
+        Passing a *seed* makes the shuffle deterministic (useful in tests).
+        """
+        roles: list[Role] = []
         for rc in self.role_counts:
-            for _ in range(rc.count):
-                seats.append(
-                    SeatConfig(seat_no=seat_no, role=rc.role, player_type=player_type)
-                )
-                seat_no += 1
-        return seats
+            roles.extend([rc.role] * rc.count)
+
+        rng = random.Random(seed)
+        rng.shuffle(roles)
+
+        return [
+            SeatConfig(seat_no=i + 1, role=role, player_type=player_type)
+            for i, role in enumerate(roles)
+        ]
 
 
 # ── Presets ──────────────────────────────────────────────────────────────────

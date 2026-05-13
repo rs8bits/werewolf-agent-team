@@ -73,7 +73,11 @@ class TestInitializeGame:
         assert gs.public_state.alive_players == [1, 2, 3, 4, 5, 6]
         assert gs.public_state.dead_players == []
         assert len(gs.players) == 6
-        assert gs.truth_state.wolf_team == [1, 2]
+        # With random seat assignment we only check count, not specific seats
+        assert len(gs.truth_state.wolf_team) == 2
+        for seat in gs.truth_state.wolf_team:
+            assert 1 <= seat <= 6
+            assert gs.truth_state.real_identities[seat] == Role.werewolf
 
     def test_initialize_role_counts(self):
         gs = initialize_game("game-001")
@@ -84,6 +88,22 @@ class TestInitializeGame:
         assert role_counts[Role.seer] == 1
         assert role_counts[Role.witch] == 1
         assert role_counts[Role.villager] == 2
+
+    def test_initialize_seed_produces_deterministic_seats(self):
+        gs1 = initialize_game("game-001", seed=42)
+        gs2 = initialize_game("game-002", seed=42)
+        roles1 = [p.role for p in gs1.players]
+        roles2 = [p.role for p in gs2.players]
+        assert roles1 == roles2
+
+    def test_initialize_without_seed_is_not_always_same(self):
+        # Extremely unlikely (1 / 6P2_2_1_1_2) that two calls produce identical ordering
+        roles_samples = set()
+        for _ in range(5):
+            gs = initialize_game("test")
+            roles_samples.add(tuple(p.role for p in gs.players))
+        # With 5 samples and 180 possible orderings, we expect multiple distinct samples
+        assert len(roles_samples) >= 2
 
     def test_initialize_custom_names_and_types(self):
         names = ["A", "B", "C", "D", "E", "F"]

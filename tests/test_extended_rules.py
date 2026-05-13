@@ -17,6 +17,9 @@ from app.state.schemas import Camp, GamePhase, Role
 from app.state.view_builder import PlayerView
 
 
+CUSTOM_FIXED_ORDER_SEED = 654
+
+
 class QueueAgent:
     def __init__(self, role: Role, decisions: list[AgentDecision]):
         self._role = role
@@ -92,7 +95,7 @@ def test_hunter_vote_death_can_shoot():
     setup = _custom_setup(
         [Role.werewolf, Role.seer, Role.witch, Role.hunter, Role.villager, Role.villager]
     )
-    gs = initialize_game("hunter-shot", setup)
+    gs = initialize_game("hunter-shot", setup, seed=CUSTOM_FIXED_ORDER_SEED)
     gs.public_state.phase = GamePhase.vote
     agents = _agents(
         gs,
@@ -118,7 +121,7 @@ def test_hunter_poison_death_cannot_shoot_by_default():
     setup = _custom_setup(
         [Role.werewolf, Role.seer, Role.witch, Role.hunter, Role.villager, Role.villager]
     )
-    gs = initialize_game("hunter-poison", setup)
+    gs = initialize_game("hunter-poison", setup, seed=CUSTOM_FIXED_ORDER_SEED)
     agents = _agents(
         gs,
         {
@@ -147,7 +150,7 @@ def test_idiot_vote_elimination_reveals_instead_of_dying():
     setup = _custom_setup(
         [Role.werewolf, Role.seer, Role.witch, Role.idiot, Role.villager, Role.villager]
     )
-    gs = initialize_game("idiot-reveal", setup)
+    gs = initialize_game("idiot-reveal", setup, seed=CUSTOM_FIXED_ORDER_SEED)
     gs.public_state.phase = GamePhase.vote
     agents = _agents(
         gs,

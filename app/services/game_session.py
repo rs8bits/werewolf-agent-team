@@ -154,6 +154,7 @@ class GameSessionService:
         agent_mode: str = "scripted",
         model: str | None = None,
         rule_config: RuleConfig | None = None,
+        seed: int | None = None,
     ) -> GameState:
         if agent_mode not in {"scripted", "llm"}:
             raise ValueError("agent_mode must be 'scripted' or 'llm'")
@@ -172,6 +173,7 @@ class GameSessionService:
             rule_config=rules,
             agent_mode=agent_mode,
             model=model,
+            seed=seed,
         )
         self._save_game_and_events(game_state)
         return game_state

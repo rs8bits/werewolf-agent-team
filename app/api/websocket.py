@@ -25,21 +25,24 @@ async def ws_game_events(
     game_state = service.get_game(game_id)
     if game_state is None:
         await websocket.send_json({"error": f"对局不存在: {game_id}"})
+        await asyncio.sleep(0.1)
         await websocket.close()
         return
 
-    events = service.list_events(game_id)
-    await websocket.send_json(
-        {
-            "type": "snapshot",
-            "game_id": game_id,
-            "game": game_state.model_dump(),
-            "events": events,
-        }
-    )
-
     subscriber = game_event_bus.subscribe(game_id)
     try:
+        events = service.list_events(game_id)
+        await websocket.send_json(
+            {
+                "type": "snapshot",
+                "game_id": game_id,
+                "game": game_state.model_dump(),
+                "events": events,
+            }
+        )
+        # Yield so the snapshot is flushed before live events arrive.
+        await asyncio.sleep(0)
+
         while True:
             try:
                 message = await asyncio.wait_for(subscriber.queue.get(), timeout=25)

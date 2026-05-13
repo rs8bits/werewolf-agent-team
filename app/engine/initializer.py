@@ -25,10 +25,11 @@ def initialize_game(
     rule_config: RuleConfig | None = None,
     agent_mode: str = "scripted",
     model: str | None = None,
+    seed: int | None = None,
 ) -> GameState:
     role_setup = setup or six_player_setup()
     rules = rule_config or default_rule_config(role_setup.player_count)
-    seat_configs = role_setup.seat_configs()
+    seat_configs = role_setup.seat_configs(seed=seed)
 
     if player_names is not None and len(player_names) != role_setup.player_count:
         raise ValueError(

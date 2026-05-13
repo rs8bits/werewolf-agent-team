@@ -30,6 +30,11 @@ from app.state.schemas import (
 from app.state.view_builder import PlayerView, build_player_view
 
 
+# Keeps legacy runner scenarios on the canonical 6-player seating while the
+# production default randomises roles across seats.
+FIXED_SIX_PLAYER_SEED = 163
+
+
 # ── FakeAgent ──────────────────────────────────────────────────────────────────
 
 
@@ -133,7 +138,7 @@ def _find_player(game_state: GameState, seat_no: int):
 class TestRunNightPhase:
     def test_werewolf_kill_causes_death(self):
         """Night wolf kill should cause the target to die."""
-        gs = initialize_game("test-001")
+        gs = initialize_game("test-001", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         wolf1 = _make_kill_decision(5)
@@ -147,7 +152,7 @@ class TestRunNightPhase:
 
     def test_witch_save_prevents_death(self):
         """Witch save should prevent the wolf kill target from dying."""
-        gs = initialize_game("test-002")
+        gs = initialize_game("test-002", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         wolf1 = _make_kill_decision(5)
@@ -161,7 +166,7 @@ class TestRunNightPhase:
 
     def test_witch_save_wrong_target_does_not_prevent_kill(self):
         """Witch saving a different player should not prevent the kill."""
-        gs = initialize_game("test-003")
+        gs = initialize_game("test-003", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         wolf1 = _make_kill_decision(5)
@@ -175,7 +180,7 @@ class TestRunNightPhase:
 
     def test_witch_poison_causes_death(self):
         """Witch poison should kill the target."""
-        gs = initialize_game("test-004")
+        gs = initialize_game("test-004", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         witch_poison = _make_poison_decision(6)
@@ -188,7 +193,7 @@ class TestRunNightPhase:
 
     def test_seer_check_logged(self):
         """Seer check target should be collected and resolved."""
-        gs = initialize_game("test-005")
+        gs = initialize_game("test-005", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         seer_check = _make_seer_check_decision(1)
@@ -204,7 +209,7 @@ class TestRunNightPhase:
 
     def test_wolf_majority_vote_determines_target(self):
         """Two wolves picking different targets — majority wins."""
-        gs = initialize_game("test-006")
+        gs = initialize_game("test-006", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         # Two wolves: seats 1 and 2
@@ -219,7 +224,7 @@ class TestRunNightPhase:
 
     def test_wolf_tie_picks_smallest_seat_no(self):
         """Two wolves, different targets, tie → smallest seat_no."""
-        gs = initialize_game("test-007")
+        gs = initialize_game("test-007", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         wolf1 = _make_kill_decision(5)
@@ -236,7 +241,7 @@ class TestRunNightPhase:
 
     def test_game_ends_when_all_wolves_dead(self):
         """If all wolves die at night, good wins and phase=ended."""
-        gs = initialize_game("test-008")
+        gs = initialize_game("test-008", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         # Wolf 1 kills wolf 2 (via witch poison on wolf 2)
@@ -259,7 +264,7 @@ class TestRunNightPhase:
 class TestRunDayPhase:
     def test_day_speech_writes_chinese_events(self):
         """Day speech events should contain Chinese content."""
-        gs = initialize_game("test-100")
+        gs = initialize_game("test-100", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.day
 
         decisions = {
@@ -283,7 +288,7 @@ class TestRunDayPhase:
 
     def test_dead_player_does_not_speak(self):
         """Dead players should be skipped during day phase."""
-        gs = initialize_game("test-101")
+        gs = initialize_game("test-101", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.day
         # Kill players 5 and 6
         p5 = _find_player(gs, 5)
@@ -311,7 +316,7 @@ class TestRunDayPhase:
 
     def test_day_phase_sets_correct_phase(self):
         """Day phase should set phase to day."""
-        gs = initialize_game("test-102")
+        gs = initialize_game("test-102", seed=FIXED_SIX_PLAYER_SEED)
         decisions = {}
         agents = _make_fake_agents(gs, decisions)
 
@@ -326,7 +331,7 @@ class TestRunDayPhase:
 class TestRunVotePhase:
     def test_unique_highest_vote_eliminates(self):
         """Player with unique highest votes is eliminated."""
-        gs = initialize_game("test-200")
+        gs = initialize_game("test-200", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.vote
 
         # Give vote decisions: 4 voters target seat 6, 1 votes seat 5, 1 abstains
@@ -353,7 +358,7 @@ class TestRunVotePhase:
 
     def test_tie_no_elimination(self):
         """Tied top votes → no one is eliminated."""
-        gs = initialize_game("test-201")
+        gs = initialize_game("test-201", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.vote
 
         decision_map = {
@@ -380,7 +385,7 @@ class TestRunVotePhase:
 
     def test_game_ends_after_vote_if_winner(self):
         """If vote elimination triggers game end, phase should be ended."""
-        gs = initialize_game("test-202")
+        gs = initialize_game("test-202", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.vote
 
         # Pre-kill one wolf, then vote out the other → good wins
@@ -407,7 +412,7 @@ class TestRunVotePhase:
 
     def test_vote_phase_sets_correct_phase(self):
         """Vote phase should set phase to vote, then to ended if winner found."""
-        gs = initialize_game("test-203")
+        gs = initialize_game("test-203", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.vote
 
         decision_map = {s: _make_vote_decision(None) for s in range(1, 7)}
@@ -426,7 +431,7 @@ class TestRunVotePhase:
 class TestRunOneCycle:
     def test_one_cycle_runs_night_day_vote(self):
         """One cycle should run night, day, and vote phases."""
-        gs = initialize_game("test-300")
+        gs = initialize_game("test-300", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         # Night: wolves kill 5, witch does nothing
@@ -482,7 +487,7 @@ class TestRunOneCycle:
 class TestRunUntilFinished:
     def test_run_until_good_wins(self):
         """Run game to completion where good wins by eliminating all wolves."""
-        gs = initialize_game("test-400")
+        gs = initialize_game("test-400", seed=FIXED_SIX_PLAYER_SEED)
 
         # Strategy:
         # Cycle 1 night: wolf kills 5 (villager)
@@ -522,7 +527,7 @@ class TestRunUntilFinished:
 
     def test_game_does_not_exceed_max_cycles(self):
         """Running with max_cycles should not loop forever."""
-        gs = initialize_game("test-401")
+        gs = initialize_game("test-401", seed=FIXED_SIX_PLAYER_SEED)
 
         # All agents do nothing useful
         fake_agents: dict[int, FakeAgent] = {}
@@ -551,7 +556,7 @@ class TestRunUntilFinished:
 class TestInformationIsolation:
     def test_runner_only_uses_build_player_view(self):
         """Verify that fake agents receive PlayerViews, not TruthState."""
-        gs = initialize_game("test-500")
+        gs = initialize_game("test-500", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         wolf1 = _make_kill_decision(5)
@@ -580,7 +585,7 @@ class TestInformationIsolation:
 
     def test_good_agent_cannot_see_wolf_team_in_runner(self):
         """Good agents should not see wolf_team via the runner."""
-        gs = initialize_game("test-501")
+        gs = initialize_game("test-501", seed=FIXED_SIX_PLAYER_SEED)
         gs.public_state.phase = GamePhase.night
 
         seer = _make_seer_check_decision(1)
@@ -611,7 +616,7 @@ class TestLangGraph:
         """Graph should be invocable."""
         graph = build_main_graph()
 
-        gs = initialize_game("test-600")
+        gs = initialize_game("test-600", seed=FIXED_SIX_PLAYER_SEED)
         initial_state = {"game_state": gs.model_dump()}
 
         result = graph.invoke(initial_state)

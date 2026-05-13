@@ -24,6 +24,7 @@ class CreateGameRequest(BaseModel):
     agent_mode: Literal["scripted", "llm"] = Field(default="scripted")
     model: str | None = Field(default=None, description="LLM 模型名，例如 qwen3.5-27b")
     rule_config: dict[str, Any] | None = Field(default=None, description="规则配置覆盖")
+    seed: int | None = Field(default=None, description="座位随机种子（可选，用于测试）")
 
     @model_validator(mode="after")
     def player_names_must_match_count(self) -> "CreateGameRequest":
@@ -55,6 +56,7 @@ def create_game(
             agent_mode=body.agent_mode,
             model=body.model,
             rule_config=rules,
+            seed=body.seed,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -190,6 +190,8 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wsStatus, setWsStatus] = useState<"idle" | "connecting" | "live" | "closed">("idle");
+  const wsRetryRef = React.useRef(0);
+  const wsRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentGameId = game?.game_id ?? gameIdInput.trim();
   const aliveCount = game?.players.filter((p) => p.status.alive).length ?? 0;
@@ -247,60 +249,86 @@ function App() {
   useEffect(() => {
     if (!game?.game_id) {
       setWsStatus("idle");
+      wsRetryRef.current = 0;
+      if (wsRetryTimerRef.current !== null) {
+        clearTimeout(wsRetryTimerRef.current);
+        wsRetryTimerRef.current = null;
+      }
       return;
     }
 
     let closedByEffect = false;
-    const socket = new WebSocket(gameEventsWebSocketUrl(game.game_id));
-    setWsStatus("connecting");
+    let socket: WebSocket;
+    const gameId = game.game_id;
 
-    socket.onopen = () => {
-      if (!closedByEffect) setWsStatus("live");
-    };
+    function connect() {
+      socket = new WebSocket(gameEventsWebSocketUrl(gameId));
+      setWsStatus("connecting");
 
-    socket.onmessage = (messageEvent) => {
-      const message = JSON.parse(messageEvent.data) as LiveMessage;
-      if ("error" in message) {
-        setError(message.error);
-        return;
-      }
-      if (message.type === "snapshot") {
-        setGame(message.game);
-        setEvents(message.events);
-        return;
-      }
-      if (message.type === "event") {
-        if (message.game) setGame(message.game);
-        setEvents((current) => {
-          if (current.some((item) => item.sequence === message.sequence)) {
-            return current;
-          }
-          return [
-            ...current,
-            {
-              sequence: message.sequence,
-              event: message.event,
-              created_at: null
+      socket.onopen = () => {
+        if (!closedByEffect) {
+          setWsStatus("live");
+          wsRetryRef.current = 0;
+        }
+      };
+
+      socket.onmessage = (messageEvent) => {
+        const message = JSON.parse(messageEvent.data) as LiveMessage;
+        if ("error" in message) {
+          setError(message.error);
+          return;
+        }
+        if (message.type === "snapshot") {
+          setGame(message.game);
+          setEvents(message.events);
+          return;
+        }
+        if (message.type === "event") {
+          if (message.game) setGame(message.game);
+          setEvents((current) => {
+            if (current.some((item) => item.sequence === message.sequence)) {
+              return current;
             }
-          ].sort((a, b) => a.sequence - b.sequence);
-        });
-        return;
-      }
-      if (message.type === "state") {
-        setGame(message.game);
-      }
-    };
+            return [
+              ...current,
+              {
+                sequence: message.sequence,
+                event: message.event,
+                created_at: null
+              }
+            ].sort((a, b) => a.sequence - b.sequence);
+          });
+          return;
+        }
+        if (message.type === "state") {
+          setGame(message.game);
+        }
+      };
 
-    socket.onerror = () => {
-      if (!closedByEffect) setWsStatus("closed");
-    };
+      socket.onerror = () => {
+        if (!closedByEffect) setWsStatus("closed");
+      };
 
-    socket.onclose = () => {
-      if (!closedByEffect) setWsStatus("closed");
-    };
+      socket.onclose = () => {
+        if (closedByEffect) return;
+        setWsStatus("closed");
+        // Auto-reconnect with backoff: 1s, 2s, 4s, 8s, max 30s
+        const delay = Math.min(1000 * Math.pow(2, wsRetryRef.current), 30000);
+        wsRetryRef.current += 1;
+        wsRetryTimerRef.current = setTimeout(() => {
+          if (!closedByEffect) connect();
+        }, delay);
+      };
+    }
+
+    connect();
 
     return () => {
       closedByEffect = true;
+      if (wsRetryTimerRef.current !== null) {
+        clearTimeout(wsRetryTimerRef.current);
+        wsRetryTimerRef.current = null;
+      }
       socket.close();
     };
   }, [game?.game_id]);
