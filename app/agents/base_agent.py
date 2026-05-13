@@ -156,7 +156,7 @@ class BaseAgent:
         return get_role_prompt(self.role)
 
     def decide(self, view: PlayerView) -> AgentDecision:
-        """基于 PlayerView 做出决策。"""
+        """基于 PlayerView 做出决策。解析失败时自动重试最多 3 次。"""
         if view.own_role != self.role:
             raise AgentDecisionError(
                 f"Agent 角色 {self.role.value} 与视图身份 {view.own_role.value} 不一致"
@@ -170,24 +170,51 @@ class BaseAgent:
             ChatMessage(role="user", content=user_message),
         ]
 
-        logger.debug("Agent %s sending request", self.role.value)
-        response = self._llm_client.chat_json(
-            messages,
-            temperature=0.7,
-            max_tokens=1024,
-            response_format={"type": "json_object"},
-        )
+        last_error: Exception | None = None
+        for attempt in range(3):
+            logger.debug("Agent %s sending request (attempt %d)", self.role.value, attempt + 1)
+            response = self._llm_client.chat_json(
+                messages,
+                temperature=0.7 if attempt == 0 else 0.3,
+                max_tokens=1024,
+                response_format={"type": "json_object"},
+            )
 
-        decision = self._parse_response(response.content)
-        self._validate_decision(decision, view.available_actions)
+            logger.debug("Agent %s raw response: %s", self.role.value, response.content[:500])
 
-        logger.debug(
-            "Agent %s decided: action_type=%s reasoning=%s",
-            self.role.value,
-            decision.action.action_type.value,
-            decision.reasoning_summary[:80] if decision.reasoning_summary else "",
-        )
-        return decision
+            try:
+                decision = self._parse_response(response.content)
+                self._validate_decision(decision, view.available_actions)
+                logger.debug(
+                    "Agent %s decided: action_type=%s reasoning=%s",
+                    self.role.value,
+                    decision.action.action_type.value,
+                    decision.reasoning_summary[:80] if decision.reasoning_summary else "",
+                )
+                return decision
+            except AgentDecisionError as exc:
+                last_error = exc
+                logger.warning(
+                    "Agent %s parse failed (attempt %d/3): %s. Raw: %s",
+                    self.role.value, attempt + 1, exc, response.content[:300],
+                )
+                # Append correction and retry
+                messages.append(ChatMessage(
+                    role="assistant",
+                    content=response.content[:200],
+                ))
+                messages.append(ChatMessage(
+                    role="user",
+                    content=(
+                        "你上一次返回的内容不是合法的 JSON 对象。"
+                        "请严格只返回一个 JSON 对象，顶层必须是字典，包含 action 和 reasoning_summary 两个字段。"
+                        "不要返回数字、字符串、列表或其他类型。"
+                    ),
+                ))
+
+        raise AgentDecisionError(
+            f"Agent {self.role.value} 重试 3 次后仍然解析失败。最后一次错误: {last_error}"
+        ) from last_error
 
     def _parse_response(self, content: str) -> AgentDecision:
         """将 LLM 返回的内容解析为 AgentDecision。
