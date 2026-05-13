@@ -100,79 +100,41 @@ def _build_user_message(view: PlayerView) -> str:
 
 def _action_schema_hints(available_actions: list[str]) -> str:
     """为可用动作生成 JSON schema 提示。"""
-    hints: list[str] = []
-    for action in available_actions:
-        if action == ActionType.speak.value:
-            hints.append(
-                '- speak: {"action_type": "speak", "content": "你的中文发言内容"}'
-            )
-        elif action == ActionType.vote.value:
-            hints.append(
-                '- vote: {"action_type": "vote", "target_seat_no": <座位号或null表示弃票>}'
-            )
-        elif action == ActionType.werewolf_kill.value:
-            hints.append(
-                '- werewolf_kill: {"action_type": "werewolf_kill", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.seer_check.value:
-            hints.append(
-                '- seer_check: {"action_type": "seer_check", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.witch_save.value:
-            hints.append(
-                '- witch_save: {"action_type": "witch_save", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.witch_poison.value:
-            hints.append(
-                '- witch_poison: {"action_type": "witch_poison", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.hunter_shoot.value:
-            hints.append(
-                '- hunter_shoot: {"action_type": "hunter_shoot", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.guard_protect.value:
-            hints.append(
-                '- guard_protect: {"action_type": "guard_protect", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.run_for_sheriff.value:
-            hints.append(
-                '- run_for_sheriff: {"action_type": "run_for_sheriff", "run": true或false}'
-            )
-        elif action == ActionType.sheriff_vote.value:
-            hints.append(
-                '- sheriff_vote: {"action_type": "sheriff_vote", "target_seat_no": <候选人座位号或null表示弃票>}'
-            )
-        elif action == ActionType.sheriff_assign.value:
-            hints.append(
-                '- sheriff_assign: {"action_type": "sheriff_assign", "target_seat_no": <移交警徽的座位号>}'
-            )
-        elif action == ActionType.hunter_shoot.value:
-            hints.append(
-                '- hunter_shoot: {"action_type": "hunter_shoot", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.guard_protect.value:
-            hints.append(
-                '- guard_protect: {"action_type": "guard_protect", "target_seat_no": <目标座位号>}'
-            )
-        elif action == ActionType.run_for_sheriff.value:
-            hints.append(
-                '- run_for_sheriff: {"action_type": "run_for_sheriff", "run": true}'
-            )
-        elif action == ActionType.sheriff_vote.value:
-            hints.append(
-                '- sheriff_vote: {"action_type": "sheriff_vote", "target_seat_no": <座位号或null表示弃票>}'
-            )
-        elif action == ActionType.sheriff_assign.value:
-            hints.append(
-                '- sheriff_assign: {"action_type": "sheriff_assign", "target_seat_no": <目标座位号>}'
-            )
+    hints: dict[str, str] = {
+        ActionType.speak.value:
+            '- speak: {"action_type": "speak", "content": "你的中文发言内容"}',
+        ActionType.vote.value:
+            '- vote: {"action_type": "vote", "target_seat_no": <座位号或null表示弃票>}',
+        ActionType.werewolf_kill.value:
+            '- werewolf_kill: {"action_type": "werewolf_kill", "target_seat_no": <目标座位号>}',
+        ActionType.seer_check.value:
+            '- seer_check: {"action_type": "seer_check", "target_seat_no": <目标座位号>}',
+        ActionType.witch_save.value:
+            '- witch_save: {"action_type": "witch_save", "target_seat_no": <目标座位号>}',
+        ActionType.witch_poison.value:
+            '- witch_poison: {"action_type": "witch_poison", "target_seat_no": <目标座位号>}',
+        ActionType.hunter_shoot.value:
+            '- hunter_shoot: {"action_type": "hunter_shoot", "target_seat_no": <目标座位号>}',
+        ActionType.guard_protect.value:
+            '- guard_protect: {"action_type": "guard_protect", "target_seat_no": <目标座位号>}',
+        ActionType.run_for_sheriff.value:
+            '- run_for_sheriff: {"action_type": "run_for_sheriff", "run": true, "content": "你的竞选公开发言"}',
+        ActionType.sheriff_vote.value:
+            '- sheriff_vote: {"action_type": "sheriff_vote", "target_seat_no": <候选人座位号或null表示弃票>}',
+        ActionType.sheriff_assign.value:
+            '- sheriff_assign: {"action_type": "sheriff_assign", "target_seat_no": <移交警徽的座位号>}',
+    }
 
-    action_list = "\n".join(hints)
+    action_list = "\n".join(
+        hints[action] for action in available_actions if action in hints
+    )
     return (
         "返回格式必须严格类似：\n"
         '{"action": {"action_type": "speak", "content": "你的中文发言内容"}, '
         '"reasoning_summary": "你的简短推理（中文）"}\n'
         "不要返回 {\"action\": \"speak\"} 这种格式。\n"
+        "注意：reasoning_summary 是你的内心推理，只有观战者能看到，不会作为公开发言。\n"
+        "参选警长时 content 才是公开发言内容，reasoning_summary 不能代替。\n"
         f"\n可选动作及其JSON格式：\n{action_list}"
     )
 
@@ -228,20 +190,37 @@ class BaseAgent:
         return decision
 
     def _parse_response(self, content: str) -> AgentDecision:
-        """将 LLM 返回的 JSON 字符串解析为 AgentDecision。"""
-        if not content or not content.strip():
+        """将 LLM 返回的内容解析为 AgentDecision。
+
+        Handles common OpenAI-compatible model failures:
+        - response wrapped in markdown fences
+        - trailing text after the JSON object
+        - plain number/string instead of object
+        """
+        text = content.strip()
+        if not text:
             raise AgentDecisionError("LLM 返回了空内容，无法解析为决策")
 
+        # Try to extract JSON object even when wrapped in markdown or trailing text
+        json_text = text
+        if not text.startswith("{"):
+            start = text.find("{")
+            if start != -1:
+                end = text.rfind("}")
+                if end > start:
+                    json_text = text[start : end + 1]
+
         try:
-            data = json.loads(content.strip())
-        except json.JSONDecodeError as exc:
+            data = json.loads(json_text)
+        except json.JSONDecodeError:
             raise AgentDecisionError(
-                f"LLM 返回的内容不是合法的 JSON。原始内容: {content[:200]}"
-            ) from exc
+                f"LLM 返回的内容不是合法的 JSON。原始内容: {text[:200]}"
+            )
 
         if not isinstance(data, dict):
             raise AgentDecisionError(
-                f"LLM 返回的 JSON 顶层必须是对象，实际类型: {type(data).__name__}"
+                f"LLM 返回的 JSON 顶层必须是对象，当前类型: {type(data).__name__}。"
+                f"原始内容: {text[:200]}"
             )
 
         if "action" not in data:

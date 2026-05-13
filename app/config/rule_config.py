@@ -20,6 +20,7 @@ class RuleConfig(BaseModel):
     guard_witch_same_target_death: bool = False
     hunter_can_shoot_when_poisoned: bool = False
     idiot_reveal_on_vote: bool = True
+    speech_retention_rounds: int = Field(default=1, ge=0, description="Agent 视图中保留完整发言的最近轮数，更早轮次压缩为摘要，0=全部压缩")
 
 
 def default_rule_config(player_count: int) -> RuleConfig:

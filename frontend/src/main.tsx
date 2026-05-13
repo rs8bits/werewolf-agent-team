@@ -78,14 +78,17 @@ const visibleEventTypes = new Set([
   "speech",
   "pk_started",
   "pk_speech",
+  "sheriff_pk_started",
+  "sheriff_pk_speech",
   "vote_cast",
   "vote_resolved",
   "hunter_shot",
   "hunter_no_shot",
-  "idiot_revealed"
+  "idiot_revealed",
+  "round_summary"
 ]);
 
-const speechEventTypes = new Set(["sheriff_speech", "speech", "pk_speech"]);
+const speechEventTypes = new Set(["sheriff_speech", "speech", "pk_speech", "sheriff_pk_speech"]);
 
 function isCamp(value: unknown): value is Camp {
   return value === "werewolf" || value === "good";
@@ -127,6 +130,10 @@ function eventTitle(event: GameEventPayload): string {
       return `${seat} 发言`;
     case "pk_speech":
       return `${seat} PK 发言`;
+    case "sheriff_pk_started":
+      return "警长竞选平票 PK";
+    case "sheriff_pk_speech":
+      return `${seat} 警长竞选 PK 发言`;
     case "vote_cast":
       return `${seat} 投票${target}`;
     case "vote_resolved":
@@ -147,6 +154,8 @@ function eventTitle(event: GameEventPayload): string {
       return `${seat} 猎人开枪${target}`;
     case "idiot_revealed":
       return `${seat} 白痴翻牌`;
+    case "round_summary":
+      return `第${event.round ?? "?"}轮 发言摘要`;
     default:
       return event.type;
   }
@@ -154,7 +163,6 @@ function eventTitle(event: GameEventPayload): string {
 
 function eventBody(event: GameEventPayload): string {
   if (typeof event.content === "string") return event.content;
-  if (typeof event.reasoning_summary === "string") return event.reasoning_summary;
   if (event.type === "vote_resolved") {
     return `出局：${event.eliminated_seat_no ?? "无人"}；票型：${compactJson(event.vote_counts)}`;
   }
@@ -162,10 +170,19 @@ function eventBody(event: GameEventPayload): string {
     return `死亡：${compactJson(event.deaths)}；原因：${compactJson(event.death_reasons)}`;
   }
   if (event.type === "sheriff_speech") {
-    return `${event.run ? "参选" : "不参选"}：${compactJson(event.content ?? event.reasoning_summary)}`;
+    const label = event.run ? "参选" : "不参选";
+    return `${label}：${compactJson(event.content ?? "")}`;
   }
   if (event.type === "sheriff_elected") {
-    return `当选：${event.sheriff_seat_no ?? "无人"}；候选：${compactJson(event.candidates ?? [])}`;
+    const reason = event.reason ? `原因：${event.reason}` : "";
+    const pk = event.pk_tied_seats ? ` PK：${compactJson(event.pk_tied_seats)}` : "";
+    return `当选：${event.sheriff_seat_no ?? "无人"}；候选：${compactJson(event.candidates ?? [])}${pk}${reason}`;
+  }
+  if (event.type === "sheriff_pk_started") {
+    return `平票候选人：${compactJson(event.tied_seats)}；票型：${compactJson(event.vote_counts)}`;
+  }
+  if (event.type === "sheriff_pk_speech") {
+    return event.content ? String(event.content) : compactJson(event);
   }
   return compactJson(event);
 }

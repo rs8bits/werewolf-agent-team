@@ -51,7 +51,7 @@ def live_event_sink(sink: EventSink | None) -> Iterator[None]:
 
 
 def _log_event(game_state: GameState, event_type: str, **kwargs: Any) -> None:
-    event = {"type": event_type, **kwargs}
+    event = {"type": event_type, "round": game_state.public_state.round, **kwargs}
     game_state.public_state.public_events.append(event)
     sink = _event_sink.get()
     if sink is not None:
@@ -302,6 +302,8 @@ def _run_sheriff_election(game_state: GameState, agents: dict[int, Agent]) -> No
         return
 
     alive = _alive_seats(game_state)
+
+    # ── Step 1: collect candidates ──────────────────────────────────────────
     candidates: list[int] = []
     for seat_no in alive:
         decision = agents[seat_no].decide(
@@ -322,7 +324,7 @@ def _run_sheriff_election(game_state: GameState, agents: dict[int, Agent]) -> No
                 "sheriff_speech",
                 seat_no=seat_no,
                 run=run,
-                content=decision.reasoning_summary or "竞选警长。",
+                content=getattr(action, "content", None) or "我参与警长竞选，希望大家结合发言投票。",
                 reasoning_summary=decision.reasoning_summary,
             )
         if action.action_type == ActionType.run_for_sheriff and run:
@@ -333,38 +335,107 @@ def _run_sheriff_election(game_state: GameState, agents: dict[int, Agent]) -> No
         _log_event(game_state, "sheriff_elected", sheriff_seat_no=None, reason="no_candidates")
         return
 
-    votes: list[Vote] = []
-    for seat_no in alive:
+    # ── Step 2: first-round vote ────────────────────────────────────────────
+    def _collect_sheriff_votes(election_round: int, allowed: set[int]) -> list[Vote]:
+        votes: list[Vote] = []
+        for seat_no in alive:
+            decision = agents[seat_no].decide(
+                _build_action_view(
+                    game_state,
+                    seat_no,
+                    ActionType.sheriff_vote,
+                    private_info={"sheriff_candidates": sorted(allowed)},
+                )
+            )
+            action = decision.action
+            target = getattr(action, "target_seat_no", None)
+            _log_event(
+                game_state,
+                "sheriff_vote_cast",
+                seat_no=seat_no,
+                target_seat_no=target,
+                election_round=election_round,
+                reasoning_summary=decision.reasoning_summary,
+            )
+            votes.append(Vote(voter_seat_no=seat_no, target_seat_no=target))
+        return votes
+
+    first_votes = _collect_sheriff_votes(election_round=1, allowed=set(candidates))
+    first_result = tally_votes(game_state, first_votes, allowed_targets=set(candidates))
+
+    # Clear winner on first round
+    if not first_result.tied_seats:
+        elected = first_result.eliminated_seat_no
+        game_state.sheriff_seat_no = elected
+        game_state.runtime_state.sheriff_election_done = True
+        _log_event(
+            game_state,
+            "sheriff_elected",
+            sheriff_seat_no=elected,
+            candidates=candidates,
+            vote_counts=first_result.vote_counts,
+        )
+        return
+
+    # ── Step 3: first-round tie → PK speeches ───────────────────────────────
+    tied = sorted(first_result.tied_seats)
+    _log_event(
+        game_state,
+        "sheriff_pk_started",
+        tied_seats=tied,
+        vote_counts=first_result.vote_counts,
+    )
+
+    for seat_no in tied:
+        if not find_player(game_state, seat_no).status.alive:
+            continue
         decision = agents[seat_no].decide(
             _build_action_view(
                 game_state,
                 seat_no,
-                ActionType.sheriff_vote,
-                private_info={"sheriff_candidates": candidates},
+                ActionType.speak,
+                private_info={"sheriff_pk_tied_seats": tied},
             )
         )
         action = decision.action
-        target = getattr(action, "target_seat_no", None)
+        if action.action_type == ActionType.speak:
+            _log_event(
+                game_state,
+                "sheriff_pk_speech",
+                seat_no=seat_no,
+                content=action.content,
+                reasoning_summary=decision.reasoning_summary,
+            )
+
+    # ── Step 4: second-round vote (only tied candidates) ────────────────────
+    second_votes = _collect_sheriff_votes(election_round=2, allowed=set(tied))
+    second_result = tally_votes(game_state, second_votes, allowed_targets=set(tied))
+
+    if not second_result.tied_seats:
+        elected = second_result.eliminated_seat_no
+        game_state.sheriff_seat_no = elected
+        game_state.runtime_state.sheriff_election_done = True
         _log_event(
             game_state,
-            "sheriff_vote_cast",
-            seat_no=seat_no,
-            target_seat_no=target,
-            reasoning_summary=decision.reasoning_summary,
+            "sheriff_elected",
+            sheriff_seat_no=elected,
+            candidates=candidates,
+            pk_tied_seats=tied,
+            vote_counts=second_result.vote_counts,
         )
-        votes.append(Vote(voter_seat_no=seat_no, target_seat_no=target))
+        return
 
-    result = tally_votes(game_state, votes, allowed_targets=set(candidates))
-    elected = result.eliminated_seat_no if not result.tied_seats else None
-    game_state.sheriff_seat_no = elected
+    # ── Step 5: second-round still tied → no sheriff ────────────────────────
+    game_state.sheriff_seat_no = None
     game_state.runtime_state.sheriff_election_done = True
     _log_event(
         game_state,
         "sheriff_elected",
-        sheriff_seat_no=elected,
+        sheriff_seat_no=None,
+        reason="second_tie",
         candidates=candidates,
-        tied_seats=result.tied_seats,
-        vote_counts=result.vote_counts,
+        pk_tied_seats=tied,
+        vote_counts=second_result.vote_counts,
     )
 
 

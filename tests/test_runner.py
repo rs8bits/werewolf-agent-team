@@ -5,12 +5,16 @@ import pytest
 from app.agents.schemas import (
     ActionType,
     AgentDecision,
+    RunForSheriffAction,
     SeerCheckAction,
+    SheriffVoteAction,
     SpeakAction,
     VoteAction,
     WerewolfKillAction,
     WitchAction,
 )
+from app.config.role_setups import twelve_player_setup
+from app.config.rule_config import RuleConfig
 from app.engine import initialize_game
 from app.graph.main_graph import (
     Agent,
@@ -119,6 +123,20 @@ def _make_seer_check_decision(target: int) -> AgentDecision:
     return AgentDecision(
         action=SeerCheckAction(target_seat_no=target),
         reasoning_summary=f"查验{target}号。",
+    )
+
+
+def _make_run_for_sheriff_decision(run: bool, content: str | None = None) -> AgentDecision:
+    return AgentDecision(
+        action=RunForSheriffAction(run=run, content=content),
+        reasoning_summary="内部推理，不应公开。",
+    )
+
+
+def _make_sheriff_vote_decision(target: int | None) -> AgentDecision:
+    return AgentDecision(
+        action=SheriffVoteAction(target_seat_no=target),
+        reasoning_summary=f"警长投票{'弃权' if target is None else str(target)+'号'}。",
     )
 
 
@@ -323,6 +341,28 @@ class TestRunDayPhase:
         run_day_phase(gs, agents)
 
         assert gs.public_state.phase == GamePhase.day
+
+    def test_events_have_round_field(self):
+        """All events logged via _log_event should carry a round field."""
+        gs = initialize_game("test-103", seed=FIXED_SIX_PLAYER_SEED)
+        gs.public_state.phase = GamePhase.day
+
+        decisions = {
+            seat: _make_speak_decision(f"我是{seat}号。")
+            for seat in range(1, 7)
+        }
+        agents = _make_fake_agents(gs, decisions)
+
+        run_day_phase(gs, agents)
+
+        for event in gs.public_state.public_events:
+            # game_initialized is created by initialize_game, not _log_event
+            if event["type"] == "game_initialized":
+                continue
+            assert "round" in event, (
+                f"Event {event.get('type')} missing 'round' field: {event}"
+            )
+            assert isinstance(event["round"], int)
 
 
 # ── Vote phase tests ──────────────────────────────────────────────────────────
@@ -633,3 +673,293 @@ class TestLangGraph:
         assert "day" in node_names
         assert "vote" in node_names
         assert "__start__" in node_names
+
+
+# ── Sheriff election tests ─────────────────────────────────────────────────────
+
+
+def _init_12p_with_sheriff(game_id: str) -> GameState:
+    """Create a 12-player game with sheriff enabled."""
+    rules = RuleConfig(enable_sheriff=True)
+    return initialize_game(
+        game_id,
+        setup=twelve_player_setup(),
+        rule_config=rules,
+    )
+
+
+def _sheriff_election_helpers() -> tuple[
+    dict[int, list[AgentDecision]], dict[int, Role]
+]:
+    """Return role map for a standard 12-player setup."""
+    # twelve_player_setup: 4 wolves, 1 seer, 1 witch, 1 hunter, 1 guard, 1 idiot, 3 villagers
+    roles: dict[int, Role] = {}
+    # We'll discover roles from the actual game state instead
+    return {}, roles
+
+
+class TestSheriffElection:
+    def test_no_candidates_no_sheriff(self):
+        """All agents decline to run → sheriff_seat_no=None, reason=no_candidates."""
+        gs = _init_12p_with_sheriff("test-sheriff-001")
+        gs.public_state.phase = GamePhase.day
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = [
+                _make_run_for_sheriff_decision(run=False),
+                _make_speak_decision(f"我是{p.seat_no}号。"),
+            ]
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        assert gs.sheriff_seat_no is None
+        assert gs.runtime_state.sheriff_election_done is True
+
+        sheriff_elected = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_elected"
+        ]
+        assert len(sheriff_elected) == 1
+        assert sheriff_elected[0]["sheriff_seat_no"] is None
+        assert sheriff_elected[0]["reason"] == "no_candidates"
+
+    def test_first_round_winner(self):
+        """One clear winner on first round → elected immediately."""
+        gs = _init_12p_with_sheriff("test-sheriff-002")
+        gs.public_state.phase = GamePhase.day
+
+        # Pick first 3 players as candidates
+        alive = [p for p in gs.players if p.status.alive]
+        candidates = [alive[0].seat_no, alive[1].seat_no, alive[2].seat_no]
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = []
+            # run_for_sheriff
+            decisions.append(
+                _make_run_for_sheriff_decision(
+                    run=p.seat_no in candidates,
+                    content=f"我是{p.seat_no}号，竞选警长。" if p.seat_no in candidates else None,
+                )
+            )
+            # sheriff_vote: everyone votes for candidates[0]
+            decisions.append(_make_sheriff_vote_decision(candidates[0]))
+            # day speech
+            decisions.append(_make_speak_decision(f"我是{p.seat_no}号。"))
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        assert gs.sheriff_seat_no == candidates[0]
+
+        sheriff_elected = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_elected"
+        ]
+        assert len(sheriff_elected) == 1
+        assert sheriff_elected[0]["sheriff_seat_no"] == candidates[0]
+
+        # No PK events should be generated
+        pk_started = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_pk_started"
+        ]
+        assert len(pk_started) == 0
+
+    def test_first_round_tie_then_second_round_winner(self):
+        """First round tie → PK speeches → second round someone wins."""
+        gs = _init_12p_with_sheriff("test-sheriff-003")
+        gs.public_state.phase = GamePhase.day
+
+        alive = [p for p in gs.players if p.status.alive]
+        # Two candidates: alive[0] and alive[1]
+        cand_a = alive[0].seat_no
+        cand_b = alive[1].seat_no
+        candidates = [cand_a, cand_b]
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = []
+            # run_for_sheriff
+            decisions.append(
+                _make_run_for_sheriff_decision(
+                    run=p.seat_no in candidates,
+                    content=f"我是{p.seat_no}号，竞选警长。" if p.seat_no in candidates else None,
+                )
+            )
+            # First round sheriff_vote: split votes to create a tie
+            if p.seat_no % 2 == 0:
+                decisions.append(_make_sheriff_vote_decision(cand_a))
+            else:
+                decisions.append(_make_sheriff_vote_decision(cand_b))
+            # PK speech (only for tied candidates)
+            if p.seat_no in candidates:
+                decisions.append(
+                    AgentDecision(
+                        action=SpeakAction(content=f"我是{p.seat_no}号，请投票给我。"),
+                        reasoning_summary="PK发言推理。",
+                    )
+                )
+            # Second round sheriff_vote: all for cand_a
+            decisions.append(_make_sheriff_vote_decision(cand_a))
+            # Regular day speech
+            decisions.append(_make_speak_decision(f"我是{p.seat_no}号。"))
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        assert gs.sheriff_seat_no == cand_a
+
+        # Verify PK events
+        pk_started = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_pk_started"
+        ]
+        assert len(pk_started) == 1
+        assert set(pk_started[0]["tied_seats"]) == set(candidates)
+
+        pk_speeches = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_pk_speech"
+        ]
+        assert len(pk_speeches) == 2
+        for ps in pk_speeches:
+            assert ps["seat_no"] in candidates
+            assert "content" in ps
+            assert "reasoning_summary" in ps  # kept in raw events for logging
+
+        # Verify second round votes have election_round=2
+        sheriff_votes_r2 = [
+            e for e in gs.public_state.public_events
+            if e["type"] == "sheriff_vote_cast" and e.get("election_round") == 2
+        ]
+        assert len(sheriff_votes_r2) == len(alive)
+
+        sheriff_elected = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_elected"
+        ]
+        assert len(sheriff_elected) == 1
+        assert sheriff_elected[0]["sheriff_seat_no"] == cand_a
+
+    def test_first_round_tie_then_second_round_tie_no_sheriff(self):
+        """First round tie → PK → second round still tie → no sheriff, reason=second_tie."""
+        gs = _init_12p_with_sheriff("test-sheriff-004")
+        gs.public_state.phase = GamePhase.day
+
+        alive = [p for p in gs.players if p.status.alive]
+        cand_a = alive[0].seat_no
+        cand_b = alive[1].seat_no
+        candidates = [cand_a, cand_b]
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = []
+            # run_for_sheriff
+            decisions.append(
+                _make_run_for_sheriff_decision(
+                    run=p.seat_no in candidates,
+                    content=f"我是{p.seat_no}号，竞选警长。" if p.seat_no in candidates else None,
+                )
+            )
+            # First round: split votes to tie
+            if p.seat_no % 2 == 0:
+                decisions.append(_make_sheriff_vote_decision(cand_a))
+            else:
+                decisions.append(_make_sheriff_vote_decision(cand_b))
+            # PK speech
+            if p.seat_no in candidates:
+                decisions.append(
+                    AgentDecision(
+                        action=SpeakAction(content=f"我是{p.seat_no}号，PK发言。"),
+                        reasoning_summary="PK推理。",
+                    )
+                )
+            # Second round: STILL tie (same split)
+            if p.seat_no % 2 == 0:
+                decisions.append(_make_sheriff_vote_decision(cand_a))
+            else:
+                decisions.append(_make_sheriff_vote_decision(cand_b))
+            # Regular day speech
+            decisions.append(_make_speak_decision(f"我是{p.seat_no}号。"))
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        assert gs.sheriff_seat_no is None
+
+        sheriff_elected = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_elected"
+        ]
+        assert len(sheriff_elected) == 1
+        assert sheriff_elected[0]["sheriff_seat_no"] is None
+        assert sheriff_elected[0]["reason"] == "second_tie"
+
+        # PK events still present
+        pk_started = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_pk_started"
+        ]
+        assert len(pk_started) == 1
+
+    def test_sheriff_speech_uses_public_content_not_reasoning(self):
+        """sheriff_speech event content must come from action.content, not reasoning_summary."""
+        gs = _init_12p_with_sheriff("test-sheriff-005")
+        gs.public_state.phase = GamePhase.day
+
+        # Only one candidate with public content
+        alive = [p for p in gs.players if p.status.alive]
+        cand = alive[0].seat_no
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = []
+            is_candidate = p.seat_no == cand
+            decisions.append(
+                _make_run_for_sheriff_decision(
+                    run=is_candidate,
+                    content="我参选警长，这是我的公开竞选发言。" if is_candidate else None,
+                )
+            )
+            decisions.append(_make_sheriff_vote_decision(cand))
+            decisions.append(_make_speak_decision(f"我是{p.seat_no}号。"))
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        sheriff_speeches = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_speech" and e["run"]
+        ]
+        assert len(sheriff_speeches) == 1
+        speech = sheriff_speeches[0]
+        # content is the public campaign speech, NOT reasoning_summary
+        assert speech["content"] == "我参选警长，这是我的公开竞选发言。"
+        assert "reasoning_summary" in speech  # still in raw events for log
+
+    def test_sheriff_speech_no_content_fallback(self):
+        """When action.content is None, use neutral fallback text."""
+        gs = _init_12p_with_sheriff("test-sheriff-006")
+        gs.public_state.phase = GamePhase.day
+
+        alive = [p for p in gs.players if p.status.alive]
+        cand = alive[0].seat_no
+
+        agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            decisions: list[AgentDecision] = []
+            is_candidate = p.seat_no == cand
+            # No content provided
+            decisions.append(
+                AgentDecision(
+                    action=RunForSheriffAction(run=is_candidate, content=None),
+                    reasoning_summary="我不想公开说。",
+                )
+            )
+            decisions.append(_make_sheriff_vote_decision(cand))
+            decisions.append(_make_speak_decision(f"我是{p.seat_no}号。"))
+            agents[p.seat_no] = FakeAgent(p.role, decisions)
+
+        run_day_phase(gs, agents)
+
+        sheriff_speeches = [
+            e for e in gs.public_state.public_events if e["type"] == "sheriff_speech" and e["run"]
+        ]
+        assert len(sheriff_speeches) == 1
+        # Fallback text, never the reasoning_summary
+        assert "参与警长竞选" in sheriff_speeches[0]["content"]
+        assert sheriff_speeches[0]["content"] != "我不想公开说。"

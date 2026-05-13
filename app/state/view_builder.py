@@ -84,23 +84,90 @@ def _find_player(game_state: GameState, seat_no: int):
 
 _PRIVATE_EVENT_TYPES = {"night_action", "night_kill_info"}
 
+_SPEECH_EVENT_TYPES = {"speech", "pk_speech", "sheriff_speech", "sheriff_pk_speech"}
+
 
 def _sanitize_public_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Remove internal reasoning fields from agent-visible public events.
+
+    reasoning_summary is for spectator / persistence logs only and must
+    never enter any Agent's PlayerView.public_events.
+    """
+    event = {
+        key: value
+        for key, value in event.items()
+        if key != "reasoning_summary"
+    }
     if event.get("type") == "night_resolved":
         return {
             key: value
             for key, value in event.items()
             if key not in {"seer_result", "death_reasons"}
         }
-    return dict(event)
+    return event
+
+
+def _compress_old_speeches(
+    events: list[dict[str, Any]],
+    current_round: int,
+    retention_rounds: int,
+) -> list[dict[str, Any]]:
+    """Compress speech events older than retention_rounds into per-round summaries.
+
+    Non-speech events and recent speeches pass through unchanged.
+    """
+    if retention_rounds < 0:
+        retention_rounds = 0
+    threshold = current_round - retention_rounds
+
+    result: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    pending_round: int | None = None
+
+    def _flush() -> None:
+        if not pending:
+            return
+        r = pending_round or 0
+        parts: list[str] = []
+        for s in pending:
+            seat = s.get("seat_no", "?")
+            content = str(s.get("content", ""))
+            short = content[:60].rstrip() + ("…" if len(content) > 60 else "")
+            parts.append(f"{seat}号: {short}")
+        result.append(
+            {
+                "type": "round_summary",
+                "round": r,
+                "content": f"第{r}轮发言摘要：" + "；".join(parts),
+            }
+        )
+        pending.clear()
+
+    for event in events:
+        event_type = event.get("type")
+        event_round = event.get("round", current_round)
+
+        if event_type in _SPEECH_EVENT_TYPES and event_round <= threshold:
+            if pending_round is not None and event_round != pending_round:
+                _flush()
+            pending_round = event_round
+            pending.append(event)
+        else:
+            _flush()
+            result.append(event)
+
+    _flush()
+    return result
 
 
 def _visible_public_events(game_state: GameState) -> list[dict[str, Any]]:
-    return [
+    events = [
         _sanitize_public_event(event)
         for event in game_state.public_state.public_events
         if event.get("private") is not True and event.get("type") not in _PRIVATE_EVENT_TYPES
     ]
+    retention = game_state.rule_config.speech_retention_rounds
+    return _compress_old_speeches(events, game_state.public_state.round, retention)
 
 
 def _private_info(game_state: GameState, seat_no: int, role: Role) -> dict[str, Any]:

@@ -60,6 +60,7 @@ class GuardProtectAction(BaseModel):
 class RunForSheriffAction(BaseModel):
     action_type: Literal[ActionType.run_for_sheriff] = ActionType.run_for_sheriff
     run: bool = Field(..., description="是否参选警长")
+    content: str | None = Field(default=None, description="参选警长时的公开发言")
 
 
 class SheriffVoteAction(BaseModel):

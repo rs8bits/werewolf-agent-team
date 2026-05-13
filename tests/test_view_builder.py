@@ -15,7 +15,12 @@ from app.state.schemas import (
     SeerCheckRecord,
     TruthState,
 )
-from app.state.view_builder import PlayerView, VisiblePlayer, build_player_view
+from app.state.view_builder import (
+    PlayerView,
+    VisiblePlayer,
+    _compress_old_speeches,
+    build_player_view,
+)
 
 
 def _make_6p_game_state(phase: GamePhase = GamePhase.night) -> GameState:
@@ -261,6 +266,151 @@ class TestPrivateInfoIsolation:
         assert witch_view.private_info["pending_wolf_kill_target"] == 3
         assert "pending_wolf_kill_target" not in seer_view.private_info
 
+class TestReasoningSummaryRemoval:
+    """reasoning_summary must never appear in Agent PlayerView.public_events."""
+
+    def test_speech_event_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "speech",
+                "seat_no": 1,
+                "content": "我是好人。",
+                "reasoning_summary": "分析局势后决定发言。",
+            }
+        ]
+        view = build_player_view(gs, 3)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event, (
+                f"reasoning_summary leaked into {event['type']}: {event}"
+            )
+        assert view.public_events[0]["content"] == "我是好人。"
+
+    def test_vote_cast_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "vote_cast",
+                "seat_no": 1,
+                "target_seat_no": 3,
+                "reasoning_summary": "投票理由。",
+            }
+        ]
+        view = build_player_view(gs, 5)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event
+        assert view.public_events[0]["target_seat_no"] == 3
+
+    def test_sheriff_speech_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "sheriff_speech",
+                "seat_no": 1,
+                "run": True,
+                "content": "竞选警长发言。",
+                "reasoning_summary": "内部推理。",
+            }
+        ]
+        view = build_player_view(gs, 2)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event
+        assert view.public_events[0]["content"] == "竞选警长发言。"
+
+    def test_sheriff_vote_cast_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "sheriff_vote_cast",
+                "seat_no": 2,
+                "target_seat_no": 1,
+                "reasoning_summary": "投票警长。",
+            }
+        ]
+        view = build_player_view(gs, 5)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event
+
+    def test_sheriff_pk_speech_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "sheriff_pk_speech",
+                "seat_no": 3,
+                "content": "PK发言。",
+                "reasoning_summary": "PK推理。",
+            }
+        ]
+        view = build_player_view(gs, 6)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event
+        assert view.public_events[0]["content"] == "PK发言。"
+
+    def test_night_resolved_strips_seer_result_and_death_reasons_and_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "night_resolved",
+                "deaths": [5],
+                "death_reasons": {"5": "werewolf_kill"},
+                "seer_result": "werewolf",
+                "reasoning_summary": "夜间总结。",
+            }
+        ]
+        view = build_player_view(gs, 3)
+        nr = view.public_events[0]
+        assert "seer_result" not in nr
+        assert "death_reasons" not in nr
+        assert "reasoning_summary" not in nr
+        assert nr["deaths"] == [5]
+
+    def test_multiple_events_all_strip_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {"type": "speech", "seat_no": 1, "content": "a", "reasoning_summary": "x"},
+            {"type": "vote_cast", "seat_no": 2, "target_seat_no": 3, "reasoning_summary": "x"},
+            {"type": "sheriff_speech", "seat_no": 3, "run": False, "content": "b", "reasoning_summary": "x"},
+            {"type": "sheriff_vote_cast", "seat_no": 4, "target_seat_no": 5, "reasoning_summary": "x"},
+            {"type": "sheriff_elected", "sheriff_seat_no": 1, "reasoning_summary": "x"},
+        ]
+        view = build_player_view(gs, 6)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event, (
+                f"reasoning_summary leaked into {event['type']}: {event}"
+            )
+
+    def test_pk_speech_strips_reasoning_summary(self):
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "pk_speech",
+                "seat_no": 2,
+                "content": "PK内容。",
+                "reasoning_summary": "PK推理。",
+            }
+        ]
+        view = build_player_view(gs, 4)
+        for event in view.public_events:
+            assert "reasoning_summary" not in event
+
+    def test_reasoning_summary_still_in_raw_game_state(self):
+        """reasoning_summary is stripped from PlayerView but still in GameState."""
+        gs = _make_6p_game_state()
+        gs.public_state.public_events = [
+            {
+                "type": "speech",
+                "seat_no": 1,
+                "content": "测试。",
+                "reasoning_summary": "推理摘要。",
+            }
+        ]
+        # Raw game state still has it
+        assert "reasoning_summary" in gs.public_state.public_events[0]
+        # PlayerView strips it
+        view = build_player_view(gs, 2)
+        assert "reasoning_summary" not in view.public_events[0]
+
+
     def test_private_night_events_are_filtered_from_view(self):
         gs = _make_6p_game_state()
         gs.public_state.public_events.extend(
@@ -274,3 +424,139 @@ class TestPrivateInfoIsolation:
         assert "night_action" not in event_types
         night_resolved = next(event for event in view.public_events if event["type"] == "night_resolved")
         assert "seer_result" not in night_resolved
+
+
+# ── Speech compression tests ───────────────────────────────────────────────────
+
+
+def _speech(round_num: int, seat: int, content: str) -> dict:
+    return {"type": "speech", "round": round_num, "seat_no": seat, "content": content}
+
+
+def _vote_cast(round_num: int, seat: int, target: int) -> dict:
+    return {"type": "vote_cast", "round": round_num, "seat_no": seat, "target_seat_no": target}
+
+
+def _night_resolved(round_num: int) -> dict:
+    return {"type": "night_resolved", "round": round_num, "deaths": []}
+
+
+class TestSpeechCompression:
+    def test_recent_speeches_kept(self):
+        """Speeches from current round and within retention window are preserved."""
+        events = [
+            _speech(1, 1, "旧发言"),
+            _speech(2, 2, "上一轮"),
+            _speech(3, 3, "当前轮"),
+            _vote_cast(3, 3, 5),
+        ]
+        # retention_rounds=2 → threshold=1, so only round 1 is compressed
+        result = _compress_old_speeches(events, current_round=3, retention_rounds=2)
+        types = [e["type"] for e in result]
+        assert "round_summary" in types
+        assert types.count("speech") == 2  # round 2 and round 3 kept
+        assert "vote_cast" in types
+
+    def test_old_speeches_compressed_to_summary(self):
+        """Speeches in compressed rounds become one round_summary per round."""
+        events = [
+            _speech(1, 1, "一号发言内容"),
+            _speech(1, 2, "二号不同观点"),
+            _speech(2, 3, "当前轮发言"),
+        ]
+        # retention_rounds=0 → threshold=2, both rounds compressed
+        result = _compress_old_speeches(events, current_round=2, retention_rounds=0)
+        summaries = [e for e in result if e["type"] == "round_summary"]
+        assert len(summaries) == 2  # one per round
+        assert summaries[0]["round"] == 1
+        assert "1号" in summaries[0]["content"]
+        assert "2号" in summaries[0]["content"]
+        assert summaries[1]["round"] == 2
+        # No raw speech events remain
+        assert all(e["type"] != "speech" for e in result)
+
+    def test_non_speech_events_preserved(self):
+        """vote_cast, night_resolved, etc. are never compressed."""
+        events = [
+            _night_resolved(1),
+            _speech(1, 1, "旧发言"),
+            _vote_cast(1, 1, 3),
+        ]
+        result = _compress_old_speeches(events, current_round=2, retention_rounds=0)
+        types = [e["type"] for e in result]
+        assert types.count("night_resolved") == 1
+        assert types.count("vote_cast") == 1
+        assert types.count("round_summary") == 1
+
+    def test_retention_zero_compresses_all_speeches(self):
+        """retention_rounds=0 compresses even current-round speeches."""
+        events = [
+            _speech(3, 1, "当前发言"),
+            _speech(3, 2, "也是当前"),
+        ]
+        result = _compress_old_speeches(events, current_round=3, retention_rounds=0)
+        # threshold = 3 - 0 = 3, so round 3 speeches are compressed
+        assert all(e["type"] != "speech" for e in result)
+        summaries = [e for e in result if e["type"] == "round_summary"]
+        assert len(summaries) == 1
+        assert summaries[0]["round"] == 3
+
+    def test_no_events_no_crash(self):
+        result = _compress_old_speeches([], current_round=1, retention_rounds=1)
+        assert result == []
+
+    def test_mixed_rounds_single_summary_per_round(self):
+        """Multiple compressed rounds each get their own summary."""
+        events = [
+            _speech(1, 1, "r1a"),
+            _speech(1, 2, "r1b"),
+            _night_resolved(1),
+            _speech(2, 1, "r2a"),
+            _speech(2, 2, "r2b"),
+            _night_resolved(2),
+            _speech(3, 1, "current"),
+        ]
+        # retention=0 → threshold=3, all 3 rounds compressed
+        result = _compress_old_speeches(events, current_round=3, retention_rounds=0)
+        summaries = [e for e in result if e["type"] == "round_summary"]
+        assert len(summaries) == 3  # one per round
+        assert summaries[0]["round"] == 1
+        assert summaries[1]["round"] == 2
+        assert summaries[2]["round"] == 3
+        # Non-speech events preserved
+        assert any(e["type"] == "night_resolved" for e in result)
+
+    def test_sheriff_speech_also_compressed(self):
+        """sheriff_speech events are speech-like and should be compressed."""
+        events = [
+            {"type": "sheriff_speech", "round": 1, "seat_no": 3, "content": "竞选"},
+            {"type": "speech", "round": 1, "seat_no": 1, "content": "发言"},
+        ]
+        result = _compress_old_speeches(events, current_round=2, retention_rounds=0)
+        assert all(e["type"] != "sheriff_speech" for e in result)
+        summaries = [e for e in result if e["type"] == "round_summary"]
+        assert len(summaries) == 1
+
+    def test_long_speech_truncated_in_summary(self):
+        """Individual speech content is truncated to ~60 chars in summary."""
+        long_content = "这是一个非常长的发言内容用来测试摘要截断功能" * 3  # ~90 chars
+        events = [_speech(1, 5, long_content)]
+        result = _compress_old_speeches(events, current_round=2, retention_rounds=0)
+        summary = result[0]
+        assert "…" in summary["content"]
+        assert len(summary["content"].split(": ")[-1]) <= 63  # ~60 chars + "…"
+
+    def test_compression_integrated_in_build_player_view(self):
+        """build_player_view should apply compression automatically."""
+        gs = _make_6p_game_state()
+        gs.public_state.round = 3
+        gs.public_state.public_events = [
+            {"type": "speech", "round": 1, "seat_no": 1, "content": "旧发言内容"},
+            {"type": "speech", "round": 3, "seat_no": 2, "content": "当前发言"},
+            {"type": "vote_cast", "round": 3, "seat_no": 1, "target_seat_no": 2},
+        ]
+        view = build_player_view(gs, 3)
+        types = [e["type"] for e in view.public_events]
+        assert "round_summary" in types
+        assert "speech" in types
+        assert "vote_cast" in types
