@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
+from app.agents import AgentDecisionError
 from app.config.rule_config import RuleConfig, default_rule_config
 from app.db import get_db
 from app.services.game_session import GameSessionService
@@ -35,6 +36,10 @@ class CreateGameRequest(BaseModel):
 
 class RunUntilFinishedRequest(BaseModel):
     max_cycles: int = Field(default=50, ge=1, le=200, description="最大轮数")
+
+
+def _agent_decision_http_error(exc: AgentDecisionError) -> HTTPException:
+    return HTTPException(status_code=502, detail=f"Agent 决策失败：{exc}")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────
@@ -79,6 +84,8 @@ def run_cycle(game_id: str, db: Session = Depends(get_db)):
     service = GameSessionService(db)
     try:
         game_state = service.run_cycle(game_id)
+    except AgentDecisionError as exc:
+        raise _agent_decision_http_error(exc)
     except ValueError as exc:
         status = 400 if "DASHSCOPE_API_KEY" in str(exc) else 404
         raise HTTPException(status_code=status, detail=str(exc))
@@ -95,6 +102,8 @@ def run_until_finished(
     service = GameSessionService(db)
     try:
         game_state = service.run_until_finished(game_id, max_cycles=body.max_cycles)
+    except AgentDecisionError as exc:
+        raise _agent_decision_http_error(exc)
     except ValueError as exc:
         status = 400 if "DASHSCOPE_API_KEY" in str(exc) else 404
         raise HTTPException(status_code=status, detail=str(exc))

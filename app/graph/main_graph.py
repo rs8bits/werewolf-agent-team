@@ -316,6 +316,15 @@ def _run_sheriff_election(game_state: GameState, agents: dict[int, Agent]) -> No
             run=run,
             reasoning_summary=decision.reasoning_summary,
         )
+        if run:
+            _log_event(
+                game_state,
+                "sheriff_speech",
+                seat_no=seat_no,
+                run=run,
+                content=decision.reasoning_summary or "竞选警长。",
+                reasoning_summary=decision.reasoning_summary,
+            )
         if action.action_type == ActionType.run_for_sheriff and run:
             candidates.append(seat_no)
 

@@ -2,19 +2,19 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
-  BadgeCheck,
   Bot,
   CircleAlert,
   Crown,
   Eye,
   FastForward,
   Loader2,
+  Mic,
   MessageCircle,
   Moon,
   Play,
   RefreshCw,
   Search,
-  Shield,
+  Settings2,
   Swords,
   Users,
   Wifi,
@@ -66,8 +66,42 @@ const campLabels: Record<Camp, string> = {
   good: "好人"
 };
 
+const visibleEventTypes = new Set([
+  "night_action",
+  "night_resolved",
+  "player_death",
+  "sheriff_speech",
+  "sheriff_vote_cast",
+  "sheriff_elected",
+  "sheriff_badge_assigned",
+  "sheriff_badge_destroyed",
+  "speech",
+  "pk_started",
+  "pk_speech",
+  "vote_cast",
+  "vote_resolved",
+  "hunter_shot",
+  "hunter_no_shot",
+  "idiot_revealed"
+]);
+
+const speechEventTypes = new Set(["sheriff_speech", "speech", "pk_speech"]);
+
 function isCamp(value: unknown): value is Camp {
   return value === "werewolf" || value === "good";
+}
+
+function asNumberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : [];
+}
+
+function shouldShowEvent(item: PersistedEvent): boolean {
+  const event = item.event;
+  if (!visibleEventTypes.has(event.type)) return false;
+  if (event.type === "night_resolved" && asNumberArray(event.deaths).length === 0) {
+    return false;
+  }
+  return true;
 }
 
 function compactJson(value: unknown): string {
@@ -85,8 +119,14 @@ function eventTitle(event: GameEventPayload): string {
   switch (event.type) {
     case "night_action":
       return `${seat} ${event.action_type ?? "夜间行动"}${target}`;
+    case "sheriff_speech":
+      return `${seat} 警长竞选发言`;
+    case "sheriff_vote_cast":
+      return `${seat} 警长投票${target}`;
     case "speech":
       return `${seat} 发言`;
+    case "pk_speech":
+      return `${seat} PK 发言`;
     case "vote_cast":
       return `${seat} 投票${target}`;
     case "vote_resolved":
@@ -97,6 +137,10 @@ function eventTitle(event: GameEventPayload): string {
       return `${seat} 死亡`;
     case "sheriff_elected":
       return "警长竞选结果";
+    case "sheriff_badge_assigned":
+      return `${event.from_seat_no ?? ""}号移交警徽 → ${event.to_seat_no ?? ""}号`;
+    case "sheriff_badge_destroyed":
+      return "警徽撕毁";
     case "pk_started":
       return "平票 PK";
     case "hunter_shot":
@@ -116,6 +160,12 @@ function eventBody(event: GameEventPayload): string {
   }
   if (event.type === "night_resolved") {
     return `死亡：${compactJson(event.deaths)}；原因：${compactJson(event.death_reasons)}`;
+  }
+  if (event.type === "sheriff_speech") {
+    return `${event.run ? "参选" : "不参选"}：${compactJson(event.content ?? event.reasoning_summary)}`;
+  }
+  if (event.type === "sheriff_elected") {
+    return `当选：${event.sheriff_seat_no ?? "无人"}；候选：${compactJson(event.candidates ?? [])}`;
   }
   return compactJson(event);
 }
@@ -142,9 +192,10 @@ function RoundTable({
   }
 
   const total = game.players.length;
+  const seatRadius = total >= 12 ? 39 : 42;
   return (
     <div className="round-table-wrap">
-      <div className="round-table">
+      <div className={`round-table ${total >= 12 ? "dense" : ""}`}>
         <div className="table-center">
           <span>{phaseLabels[game.public_state.phase]}</span>
           <strong>第 {game.public_state.round} 轮</strong>
@@ -152,8 +203,8 @@ function RoundTable({
         </div>
         {game.players.map((player, index) => {
           const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
-          const x = 50 + Math.cos(angle) * 42;
-          const y = 50 + Math.sin(angle) * 42;
+          const x = 50 + Math.cos(angle) * seatRadius;
+          const y = 50 + Math.sin(angle) * seatRadius;
           const isActive = activeSeatNo === player.seat_no;
           return (
             <article
@@ -165,7 +216,7 @@ function RoundTable({
             >
               <div className="table-seat-head">
                 <strong>{player.seat_no}号</strong>
-                {game.sheriff_seat_no === player.seat_no && <Crown size={14} />}
+                {game.sheriff_seat_no === player.seat_no && <Crown size={12} />}
               </div>
               <span>{player.name}</span>
               <small>{playerSubtitle(player)}</small>
@@ -198,11 +249,11 @@ function App() {
   const wolfAlive =
     game?.players.filter((p) => p.status.alive && p.camp === "werewolf").length ?? 0;
 
-  const latestEvents = useMemo(() => [...events].reverse(), [events]);
+  const latestEvents = useMemo(() => events.filter(shouldShowEvent).reverse(), [events]);
   const activeEvent = events.length ? events[events.length - 1].event : null;
   const activeSeatNo = typeof activeEvent?.seat_no === "number" ? activeEvent.seat_no : null;
   const speechEvents = useMemo(
-    () => events.filter((item) => item.event.type === "speech" || item.event.type === "pk_speech"),
+    () => events.filter((item) => speechEventTypes.has(item.event.type)),
     [events]
   );
   const latestSpeech = speechEvents.length ? speechEvents[speechEvents.length - 1] : null;
@@ -519,6 +570,27 @@ function App() {
             </button>
           </div>
 
+          <div className="seat-config">
+            <div className="section-title compact">
+              <Settings2 size={16} />
+              <h3>席位设置</h3>
+            </div>
+            <div className="config-grid">
+              <button type="button" disabled title="后续支持按身份指定模型">
+                <Bot size={14} /> 角色模型
+              </button>
+              <button type="button" disabled title="后续支持指定人类玩家席位">
+                <Users size={14} /> 人类席位
+              </button>
+              <button type="button" disabled title="后续支持语音转文字接入">
+                <Mic size={14} /> 语音输入
+              </button>
+              <button type="button" disabled title="后续支持 AI 与真人混战">
+                <Swords size={14} /> 人机混战
+              </button>
+            </div>
+          </div>
+
           {busy && (
             <div className="notice">
               <Loader2 className="spin" size={16} />
@@ -581,25 +653,6 @@ function App() {
               </article>
             ))}
             {!latestEvents.length && <div className="empty">暂无事件</div>}
-          </div>
-        </section>
-
-        <section className="state-panel">
-          <div className="section-title">
-            <Shield size={18} />
-            <h2>规则校验</h2>
-          </div>
-          <div className="state-block">
-            <h3>
-              <BadgeCheck size={15} /> 运行状态
-            </h3>
-            <pre>{compactJson(game?.runtime_state ?? {})}</pre>
-          </div>
-          <div className="state-block">
-            <h3>
-              <Bot size={15} /> 真相状态
-            </h3>
-            <pre>{compactJson(game?.truth_state ?? {})}</pre>
           </div>
         </section>
       </div>

@@ -6,10 +6,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.agents import AgentDecisionError
 from app.db import get_db
 from app.main import app
 from app.models import Base
 from app.services.event_bus import game_event_bus
+from app.services.game_session import GameSessionService
 from app.state.schemas import GamePhase
 
 
@@ -136,8 +138,22 @@ class TestRunCycle:
         data = resp.json()
         assert data["public_state"]["round"] == 1
         event_types = [event["type"] for event in data["public_state"]["public_events"]]
+        assert "sheriff_speech" in event_types
         assert "sheriff_elected" in event_types
         assert "vote_resolved" in event_types
+
+    def test_run_cycle_agent_decision_error_returns_json(self, client, monkeypatch):
+        create_resp = client.post("/games", json={})
+        game_id = create_resp.json()["game_id"]
+
+        def fail_run_cycle(self, game_id):
+            raise AgentDecisionError("LLM 返回的 JSON 顶层必须是对象")
+
+        monkeypatch.setattr(GameSessionService, "run_cycle", fail_run_cycle)
+        resp = client.post(f"/games/{game_id}/run-cycle")
+
+        assert resp.status_code == 502
+        assert "Agent 决策失败" in resp.json()["detail"]
 
 
 class TestRunUntilFinished:
@@ -166,6 +182,19 @@ class TestRunUntilFinished:
         resp = client.post(f"/games/{game_id}/run-until-finished")
         assert resp.status_code == 200
         assert resp.json()["public_state"]["phase"] == "ended"
+
+    def test_run_until_finished_agent_decision_error_returns_json(self, client, monkeypatch):
+        create_resp = client.post("/games", json={})
+        game_id = create_resp.json()["game_id"]
+
+        def fail_run_until_finished(self, game_id, max_cycles=50):
+            raise AgentDecisionError("LLM 返回了空内容")
+
+        monkeypatch.setattr(GameSessionService, "run_until_finished", fail_run_until_finished)
+        resp = client.post(f"/games/{game_id}/run-until-finished", json={"max_cycles": 1})
+
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "Agent 决策失败：LLM 返回了空内容"
 
 
 class TestListEvents:

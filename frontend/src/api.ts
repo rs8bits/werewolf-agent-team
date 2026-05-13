@@ -12,23 +12,44 @@ export function gameEventsWebSocketUrl(gameId: string): string {
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
   if (!response.ok) {
-    const detail = data?.detail;
-    throw new Error(typeof detail === "string" ? detail : `请求失败：${response.status}`);
+    const detail =
+      data && typeof data === "object" && "detail" in data
+        ? (data as { detail?: unknown }).detail
+        : null;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : text.trim() || `${response.status} ${response.statusText}`.trim();
+    throw new Error(`请求失败：${message}`);
   }
   return data as T;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {})
+      }
+    });
+    return parseResponse<T>(response);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(`无法连接 API：${API_BASE}`);
     }
-  });
-  return parseResponse<T>(response);
+    throw error;
+  }
 }
 
 export async function health(): Promise<{ status: string }> {
