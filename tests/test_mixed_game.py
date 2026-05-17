@@ -282,6 +282,42 @@ class TestSubmitHumanAction:
         assert still_pending["seat_no"] == p["seat_no"]
         assert still_pending["action_type"] == p["action_type"]
 
+    def test_submit_final_vote_advances_to_next_block_or_end(self, client):
+        data = _create_mixed_game(client, human_seats=[2], seed=42)
+        game_id = data["game_id"]
+        resp = client.post(
+            f"/games/{game_id}/run-until-finished",
+            json={"max_cycles": 50},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+
+        saw_round_boundary = False
+        for _ in range(10):
+            p = _pending(body)
+            if p is None:
+                assert body["public_state"]["phase"] == "ended"
+                break
+
+            submit_resp = _submit_action(
+                client,
+                game_id,
+                p["seat_no"],
+                _make_action_for_pending(p),
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            body = submit_resp.json()
+
+            pending = _pending(body)
+            stage = body.get("runtime_state", {}).get("mixed_stage")
+            phase = body["public_state"]["phase"]
+            assert not (pending is None and phase != "ended" and stage == "idle")
+            if body["public_state"]["round"] >= 2 or phase == "ended":
+                saw_round_boundary = True
+                break
+
+        assert saw_round_boundary
+
 
 class TestMixedFullCycle:
     def test_mixed_game_cycle_with_human_speech_and_vote(self, client):

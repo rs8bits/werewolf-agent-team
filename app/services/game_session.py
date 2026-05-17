@@ -221,6 +221,22 @@ class GameSessionService:
     def _has_human(self, game_state: GameState) -> bool:
         return any(p.player_type == PlayerType.human for p in game_state.players)
 
+    def _run_mixed_until_blocked_or_ended(
+        self,
+        game_state: GameState,
+        agents: dict[int, Agent],
+        *,
+        max_cycles: int = 50,
+    ) -> MixedResult:
+        completed_cycles = 0
+        while True:
+            result = run_mixed_cycle_until_blocked(game_state, agents)
+            if result != MixedResult.cycle_complete:
+                return result
+            completed_cycles += 1
+            if completed_cycles >= max_cycles:
+                return result
+
     def get_player_view(self, game_id: str, seat_no: int) -> dict | None:
         from app.state.view_builder import build_player_view
 
@@ -266,7 +282,7 @@ class GameSessionService:
         agents = self._build_agents(game_state)
         self._publish_state(game_state, "running")
         with live_event_sink(self._persist_live_event):
-            run_mixed_cycle_until_blocked(game_state, agents)
+            self._run_mixed_until_blocked_or_ended(game_state, agents)
         self._save_game_and_events(game_state)
         self._publish_state(game_state, "idle")
         return game_state
@@ -309,12 +325,9 @@ class GameSessionService:
         self._publish_state(game_state, "running")
         with live_event_sink(self._persist_live_event):
             if self._has_human(game_state):
-                for _ in range(max_cycles):
-                    if game_state.public_state.phase == GamePhase.ended:
-                        break
-                    result = run_mixed_cycle_until_blocked(game_state, agents)
-                    if result == MixedResult.blocked:
-                        break
+                self._run_mixed_until_blocked_or_ended(
+                    game_state, agents, max_cycles=max_cycles
+                )
             else:
                 run_until_finished(game_state, agents, max_cycles=max_cycles)
         self._save_game_and_events(game_state)
