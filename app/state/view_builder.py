@@ -121,42 +121,38 @@ def _compress_old_speeches(
     threshold = current_round - retention_rounds
 
     result: list[dict[str, Any]] = []
-    pending: list[dict[str, Any]] = []
-    pending_round: int | None = None
+    summary_events: dict[int, dict[str, Any]] = {}
+    summary_parts: dict[int, list[str]] = {}
 
-    def _flush() -> None:
-        if not pending:
-            return
-        r = pending_round or 0
-        parts: list[str] = []
-        for s in pending:
-            seat = s.get("seat_no", "?")
-            content = str(s.get("content", ""))
-            short = content[:60].rstrip() + ("…" if len(content) > 60 else "")
-            parts.append(f"{seat}号: {short}")
-        result.append(
-            {
+    def _summary_round(event: dict[str, Any]) -> int:
+        event_round = event.get("round", current_round)
+        return event_round if isinstance(event_round, int) else current_round
+
+    def _append_summary(event: dict[str, Any]) -> None:
+        r = _summary_round(event)
+        seat = event.get("seat_no", "?")
+        content = str(event.get("content", ""))
+        short = content[:60].rstrip() + ("…" if len(content) > 60 else "")
+        if r not in summary_events:
+            summary_events[r] = {
                 "type": "round_summary",
                 "round": r,
-                "content": f"第{r}轮发言摘要：" + "；".join(parts),
+                "content": "",
             }
-        )
-        pending.clear()
+            summary_parts[r] = []
+            result.append(summary_events[r])
+        summary_parts[r].append(f"{seat}号: {short}")
+        summary_events[r]["content"] = f"第{r}轮发言摘要：" + "；".join(summary_parts[r])
 
     for event in events:
         event_type = event.get("type")
-        event_round = event.get("round", current_round)
+        event_round = _summary_round(event)
 
         if event_type in _SPEECH_EVENT_TYPES and event_round <= threshold:
-            if pending_round is not None and event_round != pending_round:
-                _flush()
-            pending_round = event_round
-            pending.append(event)
+            _append_summary(event)
         else:
-            _flush()
             result.append(event)
 
-    _flush()
     return result
 
 

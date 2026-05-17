@@ -374,6 +374,47 @@ class TestBaseAgentWithMockLLM:
         with pytest.raises(AgentDecisionError, match="不是合法的 JSON"):
             agent.decide(view)
 
+    def test_parse_response_accepts_fenced_json(self):
+        agent = VillagerAgent(llm_client=_make_llm_client("{}"))
+        decision = agent._parse_response(
+            '```json\n{"action": {"action_type": "speak", "content": "我是好人。"}, "reasoning_summary": "发言。"}\n```'
+        )
+        assert isinstance(decision.action, SpeakAction)
+        assert decision.action.content == "我是好人。"
+
+    def test_parse_response_accepts_text_before_json(self):
+        agent = VillagerAgent(llm_client=_make_llm_client("{}"))
+        decision = agent._parse_response(
+            '好的，我返回 JSON：{"action": {"action_type": "speak", "content": "我先听大家发言。"}, "reasoning_summary": "谨慎发言。"}'
+        )
+        assert isinstance(decision.action, SpeakAction)
+        assert decision.reasoning_summary == "谨慎发言。"
+
+    def test_parse_response_accepts_text_after_json(self):
+        agent = VillagerAgent(llm_client=_make_llm_client("{}"))
+        decision = agent._parse_response(
+            '{"action": {"action_type": "speak", "content": "我认为1号偏好。"}, "reasoning_summary": "观察发言。"}\n以上是我的决策。'
+        )
+        assert isinstance(decision.action, SpeakAction)
+        assert decision.action.content == "我认为1号偏好。"
+
+    def test_parse_response_accepts_text_around_json(self):
+        agent = VillagerAgent(llm_client=_make_llm_client("{}"))
+        decision = agent._parse_response(
+            '决策如下：\n{"action": {"action_type": "speak", "content": "我暂时不跳身份。"}, "reasoning_summary": "隐藏身份。"}\n请继续。'
+        )
+        assert isinstance(decision.action, SpeakAction)
+
+    @pytest.mark.parametrize("content", [
+        '[{"action": {"action_type": "speak", "content": "我发言。"}, "reasoning_summary": "错格式。"}]',
+        "123",
+        '"not an object"',
+    ])
+    def test_parse_response_rejects_non_object_json_top_level(self, content: str):
+        agent = VillagerAgent(llm_client=_make_llm_client("{}"))
+        with pytest.raises(AgentDecisionError, match="顶层必须是对象"):
+            agent._parse_response(content)
+
     def test_empty_response_raises_agent_decision_error(self):
         gs = _make_6p_game_state(phase=GamePhase.day)
         view = _make_player_view(gs, seat_no=5)

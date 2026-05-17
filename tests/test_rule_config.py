@@ -21,6 +21,10 @@ class TestRuleConfig:
         assert cfg.enable_sheriff is True
         assert cfg.sheriff_vote_weight == 1.5
 
+    def test_default_speech_retention_keeps_current_and_previous_round(self):
+        cfg = default_rule_config(6)
+        assert cfg.speech_retention_rounds == 2
+
     def test_unsupported_default_count_raises(self):
         with pytest.raises(ValueError):
             default_rule_config(9)

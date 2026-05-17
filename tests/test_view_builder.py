@@ -526,6 +526,23 @@ class TestSpeechCompression:
         # Non-speech events preserved
         assert any(e["type"] == "night_resolved" for e in result)
 
+    def test_same_round_speeches_split_by_non_speech_share_one_summary(self):
+        events = [
+            _speech(1, 1, "第一段"),
+            _vote_cast(1, 1, 3),
+            _speech(1, 2, "第二段"),
+            _night_resolved(1),
+            _speech(1, 3, "第三段"),
+        ]
+        result = _compress_old_speeches(events, current_round=3, retention_rounds=0)
+        summaries = [e for e in result if e["type"] == "round_summary" and e["round"] == 1]
+        assert len(summaries) == 1
+        assert "1号" in summaries[0]["content"]
+        assert "2号" in summaries[0]["content"]
+        assert "3号" in summaries[0]["content"]
+        assert any(e["type"] == "vote_cast" for e in result)
+        assert any(e["type"] == "night_resolved" for e in result)
+
     def test_sheriff_speech_also_compressed(self):
         """sheriff_speech events are speech-like and should be compressed."""
         events = [
@@ -547,16 +564,18 @@ class TestSpeechCompression:
         assert len(summary["content"].split(": ")[-1]) <= 63  # ~60 chars + "…"
 
     def test_compression_integrated_in_build_player_view(self):
-        """build_player_view should apply compression automatically."""
+        """build_player_view should keep current and previous round speeches by default."""
         gs = _make_6p_game_state()
         gs.public_state.round = 3
         gs.public_state.public_events = [
             {"type": "speech", "round": 1, "seat_no": 1, "content": "旧发言内容"},
+            {"type": "speech", "round": 2, "seat_no": 6, "content": "上一轮发言"},
             {"type": "speech", "round": 3, "seat_no": 2, "content": "当前发言"},
             {"type": "vote_cast", "round": 3, "seat_no": 1, "target_seat_no": 2},
         ]
         view = build_player_view(gs, 3)
         types = [e["type"] for e in view.public_events]
         assert "round_summary" in types
-        assert "speech" in types
+        speeches = [e for e in view.public_events if e["type"] == "speech"]
+        assert {e["round"] for e in speeches} == {2, 3}
         assert "vote_cast" in types

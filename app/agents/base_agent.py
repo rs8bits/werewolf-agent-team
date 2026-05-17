@@ -228,21 +228,21 @@ class BaseAgent:
         if not text:
             raise AgentDecisionError("LLM 返回了空内容，无法解析为决策")
 
-        # Try to extract JSON object even when wrapped in markdown or trailing text
-        json_text = text
-        if not text.startswith("{"):
-            start = text.find("{")
-            if start != -1:
-                end = text.rfind("}")
-                if end > start:
-                    json_text = text[start : end + 1]
-
+        decoder = json.JSONDecoder()
         try:
-            data = json.loads(json_text)
+            data, _ = decoder.raw_decode(text)
         except json.JSONDecodeError:
-            raise AgentDecisionError(
-                f"LLM 返回的内容不是合法的 JSON。原始内容: {text[:200]}"
-            )
+            start = text.find("{")
+            if start == -1:
+                raise AgentDecisionError(
+                    f"LLM 返回的内容不是合法的 JSON。原始内容: {text[:200]}"
+                )
+            try:
+                data, _ = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                raise AgentDecisionError(
+                    f"LLM 返回的内容不是合法的 JSON。原始内容: {text[:200]}"
+                )
 
         if not isinstance(data, dict):
             raise AgentDecisionError(
