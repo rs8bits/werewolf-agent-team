@@ -60,7 +60,8 @@ export async function createGame(body: CreateGameRequest): Promise<GameState> {
   const payload = {
     player_count: body.player_count,
     agent_mode: body.agent_mode,
-    model: body.agent_mode === "llm" ? body.model || "qwen3.5-27b" : null
+    model: body.agent_mode === "llm" ? body.model || "qwen3.5-27b" : null,
+    human_seats: body.human_seats ?? null
   };
   return request("/games", {
     method: "POST",

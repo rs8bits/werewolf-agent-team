@@ -52,6 +52,7 @@ export interface CreateGameRequest {
   player_count: 6 | 12;
   agent_mode: AgentMode;
   model?: string | null;
+  human_seats?: number[] | null;
 }
 
 export type LiveMessage =

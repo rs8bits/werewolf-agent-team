@@ -17,10 +17,14 @@ from app.graph.main_graph import (
     run_one_cycle,
     run_until_finished,
 )
+from app.graph.mixed_runner import (
+    MixedResult,
+    run_mixed_cycle_until_blocked,
+)
 from app.models import GameEvent, GameSession
 from app.llm.client import LLMClient
 from app.services.event_bus import game_event_bus
-from app.state.schemas import GameState
+from app.state.schemas import GamePhase, GameState, PlayerType
 
 
 def _short_uuid() -> str:
@@ -138,10 +142,14 @@ class GameSessionService:
                 config = replace(config, model=game_state.model)
             llm_client = LLMClient(config=config)
             for p in game_state.players:
+                if p.player_type == PlayerType.human:
+                    continue
                 agents[p.seat_no] = create_agent(p.role, llm_client)
             return agents
 
         for p in game_state.players:
+            if p.player_type == PlayerType.human:
+                continue
             agents[p.seat_no] = ScriptedAgent(role=p.role)
         return agents
 
@@ -155,9 +163,26 @@ class GameSessionService:
         model: str | None = None,
         rule_config: RuleConfig | None = None,
         seed: int | None = None,
+        human_seats: list[int] | None = None,
     ) -> GameState:
         if agent_mode not in {"scripted", "llm"}:
             raise ValueError("agent_mode must be 'scripted' or 'llm'")
+        if human_seats is not None:
+            if player_count not in (6,):
+                raise ValueError(
+                    f"Human-mixed games only support player_count=6, got {player_count}"
+                )
+            seen: set[int] = set()
+            for seat in human_seats:
+                if not (1 <= seat <= player_count):
+                    raise ValueError(
+                        f"human_seat {seat} out of range [1, {player_count}]"
+                    )
+                if seat in seen:
+                    raise ValueError(
+                        f"Duplicate human_seat {seat}"
+                    )
+                seen.add(seat)
         setup = get_role_setup(player_count)
         rules = rule_config or default_rule_config(player_count)
         if agent_mode == "llm":
@@ -166,10 +191,18 @@ class GameSessionService:
                 config = replace(config, model=model)
             LLMClient(config=config)
         game_id = _short_uuid()
+        player_types: list[PlayerType] | None = None
+        if human_seats is not None:
+            human_set = set(human_seats)
+            player_types = [
+                PlayerType.human if (i + 1) in human_set else PlayerType.ai
+                for i in range(player_count)
+            ]
         game_state = initialize_game(
             game_id,
             setup,
             player_names=player_names,
+            player_types=player_types,
             rule_config=rules,
             agent_mode=agent_mode,
             model=model,
@@ -181,6 +214,72 @@ class GameSessionService:
     def get_game(self, game_id: str) -> GameState | None:
         return self._load_game_state(game_id)
 
+    def _has_human(self, game_state: GameState) -> bool:
+        return any(p.player_type == PlayerType.human for p in game_state.players)
+
+    def get_player_view(self, game_id: str, seat_no: int) -> dict | None:
+        from app.state.view_builder import build_player_view
+
+        game_state = self._load_game_state(game_id)
+        if game_state is None:
+            return None
+        if not any(p.seat_no == seat_no for p in game_state.players):
+            return None
+        view = build_player_view(game_state, seat_no)
+        return view.model_dump()
+
+    def submit_human_action(
+        self, game_id: str, seat_no: int, decision_data: dict
+    ) -> GameState:
+        from app.agents.schemas import AgentDecision
+
+        game_state = self._load_game_state(game_id)
+        if game_state is None:
+            raise ValueError(f"对局不存在: {game_id}")
+
+        rt = game_state.runtime_state
+        pending = rt.pending_human_action
+        if pending is None:
+            raise ValueError("当前没有等待真人操作")
+        if pending.seat_no != seat_no:
+            raise ValueError(
+                f"当前等待 {pending.seat_no} 号操作，收到 {seat_no} 号"
+            )
+
+        decision = AgentDecision.model_validate(decision_data)
+        action_type = decision.action.action_type.value
+
+        if action_type not in pending.available_actions:
+            raise ValueError(
+                f"操作类型 {action_type} 不在可用操作 {pending.available_actions} 中"
+            )
+
+        self._validate_human_action_target(game_state, decision)
+
+        rt.submitted_human_decision = decision.model_dump()
+        rt.pending_human_action = None
+
+        agents = self._build_agents(game_state)
+        self._publish_state(game_state, "running")
+        with live_event_sink(self._persist_live_event):
+            run_mixed_cycle_until_blocked(game_state, agents)
+        self._save_game_and_events(game_state)
+        self._publish_state(game_state, "idle")
+        return game_state
+
+    def _validate_human_action_target(
+        self, game_state: GameState, decision
+    ) -> None:
+        target = getattr(decision.action, "target_seat_no", None)
+        if target is None:
+            return
+
+        player = next((p for p in game_state.players if p.seat_no == target), None)
+        if player is None:
+            raise ValueError(f"target_seat_no={target} 不存在")
+        if not player.status.alive:
+            raise ValueError(f"target_seat_no={target} 已死亡")
+
     def run_cycle(self, game_id: str) -> GameState:
         game_state = self._load_game_state(game_id)
         if game_state is None:
@@ -188,7 +287,10 @@ class GameSessionService:
         agents = self._build_agents(game_state)
         self._publish_state(game_state, "running")
         with live_event_sink(self._persist_live_event):
-            run_one_cycle(game_state, agents)
+            if self._has_human(game_state):
+                run_mixed_cycle_until_blocked(game_state, agents)
+            else:
+                run_one_cycle(game_state, agents)
         self._save_game_and_events(game_state)
         self._publish_state(game_state, "idle")
         return game_state
@@ -202,7 +304,15 @@ class GameSessionService:
         agents = self._build_agents(game_state)
         self._publish_state(game_state, "running")
         with live_event_sink(self._persist_live_event):
-            run_until_finished(game_state, agents, max_cycles=max_cycles)
+            if self._has_human(game_state):
+                for _ in range(max_cycles):
+                    if game_state.public_state.phase == GamePhase.ended:
+                        break
+                    result = run_mixed_cycle_until_blocked(game_state, agents)
+                    if result == MixedResult.blocked:
+                        break
+            else:
+                run_until_finished(game_state, agents, max_cycles=max_cycles)
         self._save_game_and_events(game_state)
         self._publish_state(game_state, "idle")
         return game_state

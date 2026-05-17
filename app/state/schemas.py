@@ -113,6 +113,15 @@ class SeerCheckRecord(BaseModel):
     result: Camp
 
 
+class PendingHumanAction(BaseModel):
+    seat_no: int = Field(ge=1)
+    action_type: str
+    round: int = Field(ge=0)
+    phase: GamePhase
+    available_actions: list[str] = Field(default_factory=list)
+    private_info: dict[str, Any] = Field(default_factory=dict)
+
+
 class RuntimeState(BaseModel):
     witch_save_used: bool = False
     witch_poison_used: bool = False
@@ -122,6 +131,16 @@ class RuntimeState(BaseModel):
     hunter_shot_used_seats: list[int] = Field(default_factory=list)
     idiot_revealed_seats: list[int] = Field(default_factory=list)
     sheriff_election_done: bool = False
+    # ── Human-mixed game fields ──────────────────────────────────────────
+    pending_human_action: PendingHumanAction | None = None
+    submitted_human_decision: dict[str, Any] | None = None
+    mixed_stage: str = "idle"
+    mixed_cursor: int = 0
+    mixed_wolf_targets: dict[int, int] = Field(default_factory=dict)
+    mixed_seer_target: int | None = None
+    mixed_witch_save_target: int | None = None
+    mixed_witch_poison_target: int | None = None
+    mixed_votes: dict[int, int | None] = Field(default_factory=dict)
 
 
 # ── Game state ───────────────────────────────────────────────────────────────
