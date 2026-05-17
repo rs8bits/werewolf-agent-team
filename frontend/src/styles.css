@@ -567,6 +567,172 @@ h3 {
   padding: 10px;
 }
 
+/* ── Seat toggle grid ──────────────────────────────────────────────────── */
+
+.seat-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.seat-toggle {
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.seat-toggle.active {
+  border-color: #285b4a;
+  background: #dff0e7;
+  color: #173d2f;
+}
+
+/* ── Player action panel ───────────────────────────────────────────────── */
+
+.player-action-panel {
+  border: 1px solid #cbd5ce;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.pending-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid #d9c889;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fff8df;
+  color: #6b5612;
+  font-size: 13px;
+}
+
+.pending-banner .tiny {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── View meta ─────────────────────────────────────────────────────────── */
+
+.view-meta {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.view-meta-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 13px;
+}
+
+.view-meta-row > span {
+  color: #5b6d62;
+  font-size: 13px;
+  font-weight: 700;
+  padding-top: 2px;
+}
+
+.view-meta-row > strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mini-pre {
+  max-height: 140px;
+  padding: 8px;
+  background: #f9faf8;
+  border: 1px solid #e0e7e2;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.action-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ── Action form ───────────────────────────────────────────────────────── */
+
+.action-form {
+  border-top: 1px solid #e0e7e2;
+  padding-top: 12px;
+}
+
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+}
+
+.target-grid button {
+  min-height: 34px;
+  font-size: 12px;
+}
+
+.target-grid button.active {
+  border-color: #285b4a;
+  background: #dff0e7;
+  color: #173d2f;
+  font-weight: 800;
+}
+
+/* ── Textarea ──────────────────────────────────────────────────────────── */
+
+.textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #b9c4be;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #285b4a;
+  box-shadow: 0 0 0 2px #dff0e7;
+}
+
+/* ── Pending highlight on seat selector ────────────────────────────────── */
+
+.segmented button.pending-highlight {
+  border-color: #b8892d;
+  background: #fff8df;
+  color: #78590d;
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    border-color: #b8892d;
+  }
+  50% {
+    border-color: #e0b557;
+  }
+}
+
+.hint {
+  color: #6b6d5f;
+  font-size: 11px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

@@ -29,6 +29,43 @@ export interface GameEventPayload {
   [key: string]: unknown;
 }
 
+export interface VisiblePlayer {
+  seat_no: number;
+  name: string;
+  player_type: "ai" | "human";
+  alive: boolean;
+  can_vote: boolean;
+}
+
+export interface PlayerView {
+  game_id: string;
+  viewer_seat_no: number;
+  round: number;
+  phase: GamePhase;
+  players: VisiblePlayer[];
+  public_events: GameEventPayload[];
+  own_role: string;
+  own_camp: Camp;
+  known_wolf_team: number[];
+  sheriff_seat_no?: number | null;
+  private_info: Record<string, unknown>;
+  available_actions: string[];
+}
+
+export interface PendingHumanAction {
+  seat_no: number;
+  action_type: string;
+  round: number;
+  phase: GamePhase;
+  available_actions: string[];
+  private_info: Record<string, unknown>;
+}
+
+export interface AgentDecisionRequest {
+  action: Record<string, unknown>;
+  reasoning_summary?: string;
+}
+
 export interface PersistedEvent {
   sequence: number;
   event: GameEventPayload;

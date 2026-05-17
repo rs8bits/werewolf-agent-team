@@ -1,4 +1,10 @@
-import type { CreateGameRequest, GameState, PersistedEvent } from "./types";
+import type {
+  AgentDecisionRequest,
+  CreateGameRequest,
+  GameState,
+  PersistedEvent,
+  PlayerView,
+} from "./types";
 
 const DEFAULT_API_BASE = "http://127.0.0.1:8001";
 
@@ -92,4 +98,25 @@ export async function runUntilFinished(
 
 export async function getEvents(gameId: string): Promise<PersistedEvent[]> {
   return request(`/games/${encodeURIComponent(gameId)}/events`, { method: "GET" });
+}
+
+export async function getPlayerView(
+  gameId: string,
+  seatNo: number
+): Promise<PlayerView> {
+  return request(
+    `/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(seatNo)}/view`,
+    { method: "GET" }
+  );
+}
+
+export async function submitHumanAction(
+  gameId: string,
+  seatNo: number,
+  body: AgentDecisionRequest
+): Promise<GameState> {
+  return request(
+    `/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(seatNo)}/actions`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
 }

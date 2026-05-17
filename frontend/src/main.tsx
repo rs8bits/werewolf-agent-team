@@ -26,17 +26,22 @@ import {
   gameEventsWebSocketUrl,
   getEvents,
   getGame,
+  getPlayerView,
   health,
   runCycle,
-  runUntilFinished
+  runUntilFinished,
+  submitHumanAction
 } from "./api";
 import type {
+  AgentDecisionRequest,
   AgentMode,
   Camp,
   GameEventPayload,
   GameState,
   LiveMessage,
+  PendingHumanAction,
   PersistedEvent,
+  PlayerView,
   PlayerState
 } from "./types";
 import "./styles.css";
@@ -105,6 +110,10 @@ function shouldShowEvent(item: PersistedEvent): boolean {
     return false;
   }
   return true;
+}
+
+function playerAlive(p: { alive?: boolean; status?: { alive: boolean } }): boolean {
+  return p.alive === true || p.status?.alive === true;
 }
 
 function compactJson(value: unknown): string {
@@ -260,6 +269,12 @@ function App() {
   const [wsStatus, setWsStatus] = useState<"idle" | "connecting" | "live" | "closed">("idle");
   const wsRetryRef = React.useRef(0);
   const wsRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [humanSeats, setHumanSeats] = useState<number[]>([]);
+  const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
+  const [playerView, setPlayerView] = useState<PlayerView | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const [actionForm, setActionForm] = useState<Record<string, unknown>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const currentGameId = game?.game_id ?? gameIdInput.trim();
   const aliveCount = game?.players.filter((p) => p.status.alive).length ?? 0;
@@ -401,7 +416,87 @@ function App() {
     };
   }, [game?.game_id]);
 
+  const pendingAction: PendingHumanAction | null =
+    game?.runtime_state?.pending_human_action != null
+      ? (game.runtime_state.pending_human_action as PendingHumanAction)
+      : null;
+
   const winnerText = isCamp(game?.winner) ? `${campLabels[game.winner]}胜利` : "未决";
+
+  async function loadPlayerView(seatNo: number) {
+    setViewError(null);
+    try {
+      const v = await getPlayerView(currentGameId, seatNo);
+      setPlayerView(v);
+    } catch (err) {
+      setViewError(err instanceof Error ? err.message : "加载失败");
+    }
+  }
+
+  async function handleSubmitHumanAction() {
+    if (!game || pendingAction == null) return;
+    const seatNo = pendingAction.seat_no;
+    const selected = actionForm["selected_action_type"];
+    if (typeof selected !== "string") {
+      setError("请选择要执行的动作");
+      return;
+    }
+    const actionObj: Record<string, unknown> = { action_type: selected };
+    if (selected === "speak") {
+      const content = actionForm["speak_content"];
+      if (typeof content !== "string" || !content.trim()) {
+        setError("发言内容不能为空");
+        return;
+      }
+      actionObj["content"] = content;
+    } else if (
+      selected === "vote" ||
+      selected === "sheriff_vote"
+    ) {
+      const target = actionForm["target_seat_no"];
+      if (target === "abstain") {
+        actionObj["target_seat_no"] = null;
+      } else if (typeof target === "number") {
+        actionObj["target_seat_no"] = target;
+      } else {
+        setError("请选择投票目标");
+        return;
+      }
+    } else if (
+      selected === "werewolf_kill" ||
+      selected === "seer_check" ||
+      selected === "witch_save" ||
+      selected === "witch_poison"
+    ) {
+      const target = actionForm["target_seat_no"];
+      if (typeof target !== "number") {
+        setError("请选择目标");
+        return;
+      }
+      actionObj["target_seat_no"] = target;
+    }
+
+    const body: AgentDecisionRequest = {
+      action: actionObj,
+      reasoning_summary: "",
+    };
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const nextGame = await submitHumanAction(currentGameId, seatNo, body);
+      setGame(nextGame);
+      setEvents(await getEvents(nextGame.game_id));
+      setActionForm({});
+      if (selectedSeat != null) {
+        await loadPlayerView(selectedSeat);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "提交失败");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -469,7 +564,13 @@ function App() {
                 <button
                   key={count}
                   className={playerCount === count ? "active" : ""}
-                  onClick={() => setPlayerCount(count as 6 | 12)}
+                  onClick={() => {
+                    const nextCount = count as 6 | 12;
+                    setPlayerCount(nextCount);
+                    if (nextCount !== 6) {
+                      setHumanSeats([]);
+                    }
+                  }}
                   type="button"
                 >
                   {count} 人
@@ -518,12 +619,16 @@ function App() {
                   const next = await createGame({
                     player_count: playerCount,
                     agent_mode: agentMode,
-                    model
+                    model,
+                    human_seats: playerCount === 6 && humanSeats.length > 0 ? humanSeats : null,
                   });
                   setGame(next);
                   setEvents(await getEvents(next.game_id));
                   setGameIdInput(next.game_id);
                   localStorage.setItem(STORAGE_KEY, next.game_id);
+                  setPlayerView(null);
+                  setViewError(null);
+                  setActionForm({});
                 })
               }
             >
@@ -596,16 +701,35 @@ function App() {
               <button type="button" disabled title="后续支持按身份指定模型">
                 <Bot size={14} /> 角色模型
               </button>
-              <button type="button" disabled title="后续支持指定人类玩家席位">
-                <Users size={14} /> 人类席位
-              </button>
               <button type="button" disabled title="后续支持语音转文字接入">
                 <Mic size={14} /> 语音输入
               </button>
-              <button type="button" disabled title="后续支持 AI 与真人混战">
-                <Swords size={14} /> 人机混战
-              </button>
             </div>
+            {playerCount === 6 && (
+              <div className="human-seat-toggle" style={{ marginTop: 8 }}>
+                <span style={{ fontSize: 12, color: "#5b6d62", fontWeight: 700 }}>
+                  真人席位（可多选）
+                </span>
+                <div className="seat-toggle-grid">
+                  {Array.from({ length: 6 }, (_, i) => i + 1).map((seat) => (
+                    <button
+                      key={seat}
+                      type="button"
+                      className={`seat-toggle ${humanSeats.includes(seat) ? "active" : ""}`}
+                      onClick={() =>
+                        setHumanSeats((prev) =>
+                          prev.includes(seat)
+                            ? prev.filter((s) => s !== seat)
+                            : [...prev, seat].sort((a, b) => a - b)
+                        )
+                      }
+                    >
+                      {seat}号
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {busy && (
@@ -649,6 +773,281 @@ function App() {
               {!speechEvents.length && <div className="empty slim">暂无发言</div>}
             </div>
           </div>
+        </section>
+
+        <section className="player-action-panel">
+          <div className="section-title">
+            <Users size={18} />
+            <h2>玩家操作</h2>
+          </div>
+
+          {/* Seat selector + view loader */}
+          <div className="field-row">
+            <label>选择座位</label>
+            <div className="segmented">
+              {Array.from({ length: game?.players.length ?? 6 }, (_, i) => i + 1).map((seat) => (
+                <button
+                  key={seat}
+                  className={`${selectedSeat === seat ? "active" : ""} ${
+                    pendingAction?.seat_no === seat ? "pending-highlight" : ""
+                  }`}
+                  onClick={() => {
+                    setSelectedSeat(seat);
+                    if (currentGameId) loadPlayerView(seat);
+                  }}
+                  type="button"
+                  disabled={Boolean(busy) || submitting}
+                >
+                  {seat}号
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {!selectedSeat && !pendingAction && (
+            <div className="empty slim">选择座位并载入视角，或等待真人操作</div>
+          )}
+
+          {/* Pending action indicator */}
+          {pendingAction && (
+            <div className="pending-banner">
+              <CircleAlert size={16} />
+              <span>
+                等待 <strong>{pendingAction.seat_no}号</strong> 操作（
+                {phaseLabels[pendingAction.phase] ?? pendingAction.phase}
+                第{pendingAction.round}轮）
+              </span>
+              {selectedSeat !== pendingAction.seat_no && (
+                <button
+                  type="button"
+                  className="tiny"
+                  onClick={() => {
+                    setSelectedSeat(pendingAction.seat_no);
+                    if (currentGameId) loadPlayerView(pendingAction.seat_no);
+                  }}
+                >
+                  切换到此座位
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Player view info */}
+          {playerView && selectedSeat != null && (
+            <div className="view-meta">
+              <div className="view-meta-row">
+                <span>身份</span>
+                <strong>
+                  {roleLabels[playerView.own_role] ?? playerView.own_role}{" "}
+                  <StatusPill tone={playerView.own_camp === "werewolf" ? "bad" : "good"}>
+                    {campLabels[playerView.own_camp]}
+                  </StatusPill>
+                </strong>
+              </div>
+              {playerView.known_wolf_team.length > 0 && (
+                <div className="view-meta-row">
+                  <span>狼队友</span>
+                  <strong>{playerView.known_wolf_team.map((s) => `${s}号`).join("、")}</strong>
+                </div>
+              )}
+              {Object.keys(playerView.private_info).length > 0 && (
+                <div className="view-meta-row">
+                  <span>私有信息</span>
+                  <pre className="mini-pre">
+                    {JSON.stringify(playerView.private_info, null, 2)}
+                  </pre>
+                </div>
+              )}
+              <div className="view-meta-row">
+                <span>可用动作</span>
+                <div className="action-tags">
+                  {playerView.available_actions.map((a) => (
+                    <StatusPill key={a}>{a}</StatusPill>
+                  ))}
+                  {!playerView.available_actions.length && "无"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {viewError && (
+            <div className="notice error">
+              <CircleAlert size={16} />
+              {viewError}
+            </div>
+          )}
+
+          {/* Action form when pending matches selected seat */}
+          {pendingAction && selectedSeat === pendingAction.seat_no && (
+            <div className="action-form">
+              <div className="field-row">
+                <label>动作类型</label>
+                <div className="segmented">
+                  {pendingAction.available_actions.map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      className={
+                        actionForm["selected_action_type"] === a ? "active" : ""
+                      }
+                      onClick={() =>
+                        setActionForm((prev) => ({
+                          ...prev,
+                          selected_action_type: a,
+                          target_seat_no: undefined,
+                          speak_content: undefined,
+                        }))
+                      }
+                    >
+                      {a}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {actionForm["selected_action_type"] === "speak" && (
+                <div className="field-row">
+                  <label>发言内容</label>
+                  <textarea
+                    className="textarea"
+                    rows={3}
+                    placeholder="输入发言..."
+                    value={
+                      typeof actionForm["speak_content"] === "string"
+                        ? (actionForm["speak_content"] as string)
+                        : ""
+                    }
+                    onChange={(e) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        speak_content: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              )}
+
+              {(actionForm["selected_action_type"] === "vote" ||
+                actionForm["selected_action_type"] === "sheriff_vote") && (
+                <div className="field-row">
+                  <label>投票目标</label>
+                  <div className="target-grid">
+                    <button
+                      type="button"
+                      className={
+                        actionForm["target_seat_no"] === "abstain" ? "active" : ""
+                      }
+                      onClick={() =>
+                        setActionForm((prev) => ({
+                          ...prev,
+                          target_seat_no: "abstain",
+                        }))
+                      }
+                    >
+                      弃票
+                    </button>
+                    {(playerView?.players ?? game?.players ?? [])
+                      .filter(playerAlive)
+                      .map((p) => (
+                        <button
+                          key={p.seat_no}
+                          type="button"
+                          className={
+                            actionForm["target_seat_no"] === p.seat_no ? "active" : ""
+                          }
+                          onClick={() =>
+                            setActionForm((prev) => ({
+                              ...prev,
+                              target_seat_no: p.seat_no,
+                            }))
+                          }
+                        >
+                          {p.seat_no}号
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {(actionForm["selected_action_type"] === "werewolf_kill" ||
+                actionForm["selected_action_type"] === "seer_check" ||
+                actionForm["selected_action_type"] === "witch_poison") && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {(playerView?.players ?? game?.players ?? [])
+                      .filter(
+                        (p) => playerAlive(p) && p.seat_no !== selectedSeat
+                      )
+                      .map((p) => (
+                        <button
+                          key={p.seat_no}
+                          type="button"
+                          className={
+                            actionForm["target_seat_no"] === p.seat_no ? "active" : ""
+                          }
+                          onClick={() =>
+                            setActionForm((prev) => ({
+                              ...prev,
+                              target_seat_no: p.seat_no,
+                            }))
+                          }
+                        >
+                          {p.seat_no}号
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {actionForm["selected_action_type"] === "witch_save" && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {(playerView?.players ?? game?.players ?? [])
+                      .filter(playerAlive)
+                      .map((p) => (
+                        <button
+                          key={p.seat_no}
+                          type="button"
+                          className={
+                            actionForm["target_seat_no"] === p.seat_no ? "active" : ""
+                          }
+                          onClick={() =>
+                            setActionForm((prev) => ({
+                              ...prev,
+                              target_seat_no: p.seat_no,
+                            }))
+                          }
+                        >
+                          {p.seat_no}号
+                        </button>
+                      ))}
+                  </div>
+                  {pendingAction.private_info?.pending_wolf_kill_target != null && (
+                    <div className="hint" style={{ marginTop: 4 }}>
+                      建议目标：{String(pendingAction.private_info.pending_wolf_kill_target)}号（被狼击杀）
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                className="primary"
+                type="button"
+                disabled={submitting}
+                onClick={() => handleSubmitHumanAction()}
+                style={{ marginTop: 8, width: "100%" }}
+              >
+                {submitting ? (
+                  <Loader2 className="spin" size={16} />
+                ) : (
+                  <Play size={16} />
+                )}
+                {submitting ? "提交中..." : `提交 ${pendingAction.seat_no}号动作`}
+              </button>
+            </div>
+          )}
         </section>
 
         <section className="events-panel">
