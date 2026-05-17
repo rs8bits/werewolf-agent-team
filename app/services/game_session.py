@@ -42,19 +42,23 @@ class GameSessionService:
     def _save_game_and_events(self, game_state: GameState) -> None:
         game_id = game_state.game_id
 
-        existing_count = (
-            self.db.query(GameEvent)
-            .filter(GameEvent.game_id == game_id)
-            .count()
-        )
+        existing_sequences = {
+            row[0]
+            for row in (
+                self.db.query(GameEvent.sequence)
+                .filter(GameEvent.game_id == game_id)
+                .all()
+            )
+        }
         all_events = game_state.public_state.public_events
-        new_events = all_events[existing_count:]
 
-        for i, evt in enumerate(new_events):
+        for sequence, evt in enumerate(all_events):
+            if sequence in existing_sequences:
+                continue
             self.db.add(
                 GameEvent(
                     game_id=game_id,
-                    sequence=existing_count + i,
+                    sequence=sequence,
                     event_json=evt,
                 )
             )
@@ -318,17 +322,47 @@ class GameSessionService:
         return game_state
 
     def list_events(self, game_id: str) -> list[dict]:
+        session = (
+            self.db.query(GameSession)
+            .filter(GameSession.game_id == game_id)
+            .first()
+        )
         rows = (
             self.db.query(GameEvent)
             .filter(GameEvent.game_id == game_id)
-            .order_by(GameEvent.sequence)
+            .order_by(GameEvent.sequence, GameEvent.id)
             .all()
         )
-        return [
-            {
-                "sequence": r.sequence,
-                "event": r.event_json,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
+        created_at_by_sequence: dict[int, str | None] = {}
+        for row in rows:
+            created_at_by_sequence.setdefault(
+                row.sequence,
+                row.created_at.isoformat() if row.created_at else None,
+            )
+
+        if session is not None:
+            public_state = session.state_json.get("public_state", {})
+            events = public_state.get("public_events", [])
+            return [
+                {
+                    "sequence": sequence,
+                    "event": event,
+                    "created_at": created_at_by_sequence.get(sequence),
+                }
+                for sequence, event in enumerate(events)
+            ]
+
+        seen_sequences: set[int] = set()
+        result = []
+        for row in rows:
+            if row.sequence in seen_sequences:
+                continue
+            seen_sequences.add(row.sequence)
+            result.append(
+                {
+                    "sequence": row.sequence,
+                    "event": row.event_json,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+            )
+        return result

@@ -87,6 +87,21 @@ class TestRunCycle:
         db_count = db_session.query(GameEvent).filter(GameEvent.game_id == gs.game_id).count()
         assert db_count == evt_count
 
+    def test_run_cycle_persists_contiguous_event_sequences(self, db_session):
+        svc = GameSessionService(db_session)
+        gs = svc.create_game(seed=42)
+        gs = svc.run_cycle(gs.game_id)
+
+        db_events = (
+            db_session.query(GameEvent)
+            .filter(GameEvent.game_id == gs.game_id)
+            .order_by(GameEvent.sequence, GameEvent.id)
+            .all()
+        )
+        sequences = [event.sequence for event in db_events]
+
+        assert sequences == list(range(len(gs.public_state.public_events)))
+
 
 class TestRunUntilFinished:
     def test_run_until_finished_ends(self, db_session):
@@ -132,6 +147,17 @@ class TestListEvents:
         events = svc.list_events(gs.game_id)
         seqs = [e["sequence"] for e in events]
         assert seqs == sorted(seqs)
+
+    def test_list_events_uses_state_event_sequence(self, db_session):
+        svc = GameSessionService(db_session)
+        gs = svc.create_game(seed=42)
+        gs = svc.run_cycle(gs.game_id)
+
+        events = svc.list_events(gs.game_id)
+        seqs = [event["sequence"] for event in events]
+
+        assert len(events) == len(gs.public_state.public_events)
+        assert seqs == list(range(len(events)))
 
     def test_list_events_empty_game(self, db_session):
         svc = GameSessionService(db_session)

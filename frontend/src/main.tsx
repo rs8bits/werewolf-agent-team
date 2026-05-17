@@ -75,25 +75,30 @@ const visibleEventTypes = new Set([
   "night_action",
   "night_resolved",
   "player_death",
-  "sheriff_speech",
   "sheriff_vote_cast",
   "sheriff_elected",
   "sheriff_badge_assigned",
   "sheriff_badge_destroyed",
-  "speech",
   "pk_started",
-  "pk_speech",
   "sheriff_pk_started",
-  "sheriff_pk_speech",
   "vote_cast",
   "vote_resolved",
   "hunter_shot",
   "hunter_no_shot",
-  "idiot_revealed",
-  "round_summary"
+  "idiot_revealed"
 ]);
 
 const speechEventTypes = new Set(["sheriff_speech", "speech", "pk_speech", "sheriff_pk_speech"]);
+
+function normalizeEvents(items: PersistedEvent[]): PersistedEvent[] {
+  const bySequence = new Map<number, PersistedEvent>();
+  for (const item of items) {
+    if (!bySequence.has(item.sequence)) {
+      bySequence.set(item.sequence, item);
+    }
+  }
+  return Array.from(bySequence.values()).sort((a, b) => a.sequence - b.sequence);
+}
 
 function isCamp(value: unknown): value is Camp {
   return value === "werewolf" || value === "good";
@@ -281,12 +286,16 @@ function App() {
   const wolfAlive =
     game?.players.filter((p) => p.status.alive && p.camp === "werewolf").length ?? 0;
 
-  const latestEvents = useMemo(() => events.filter(shouldShowEvent).reverse(), [events]);
-  const activeEvent = events.length ? events[events.length - 1].event : null;
+  const orderedEvents = useMemo(() => normalizeEvents(events), [events]);
+  const latestEvents = useMemo(
+    () => orderedEvents.filter(shouldShowEvent).reverse(),
+    [orderedEvents]
+  );
+  const activeEvent = orderedEvents.length ? orderedEvents[orderedEvents.length - 1].event : null;
   const activeSeatNo = typeof activeEvent?.seat_no === "number" ? activeEvent.seat_no : null;
   const speechEvents = useMemo(
-    () => events.filter((item) => speechEventTypes.has(item.event.type)),
-    [events]
+    () => orderedEvents.filter((item) => speechEventTypes.has(item.event.type)),
+    [orderedEvents]
   );
   const latestSpeech = speechEvents.length ? speechEvents[speechEvents.length - 1] : null;
 
@@ -363,7 +372,7 @@ function App() {
         }
         if (message.type === "snapshot") {
           setGame(message.game);
-          setEvents(message.events);
+          setEvents(normalizeEvents(message.events));
           return;
         }
         if (message.type === "event") {
@@ -379,7 +388,7 @@ function App() {
                 event: message.event,
                 created_at: null
               }
-            ].sort((a, b) => a.sequence - b.sequence);
+            ];
           });
           return;
         }
@@ -422,6 +431,10 @@ function App() {
       : null;
 
   const winnerText = isCamp(game?.winner) ? `${campLabels[game.winner]}胜利` : "未决";
+  const hasHumanPlayers =
+    game?.players.some((player) => player.player_type === "human") ??
+    (playerCount === 6 && humanSeats.length > 0);
+  const autoRunLabel = hasHumanPlayers ? "推进到等待/结束" : "跑到结束";
 
   async function loadPlayerView(seatNo: number) {
     setViewError(null);
@@ -648,13 +661,13 @@ function App() {
             <button
               type="button"
               disabled={!currentGameId || Boolean(busy)}
-              onClick={() => withBusy("运行至结束", async () => {
+              onClick={() => withBusy(autoRunLabel, async () => {
                 const next = await runUntilFinished(currentGameId, maxCycles);
                 setGame(next);
                 setEvents(await getEvents(next.game_id));
               })}
             >
-              <FastForward size={16} /> 跑到结束
+              <FastForward size={16} /> {autoRunLabel}
             </button>
             <button
               type="button"
@@ -755,7 +768,7 @@ function App() {
           <div className="speech-order">
             <div className="section-title compact">
               <MessageCircle size={16} />
-              <h3>发言顺序</h3>
+              <h3>发言记录</h3>
             </div>
             <div className="speech-list">
               {speechEvents.map((item) => (
@@ -1053,7 +1066,7 @@ function App() {
         <section className="events-panel">
           <div className="section-title">
             <Eye size={18} />
-            <h2>事件日志</h2>
+            <h2>系统事件</h2>
           </div>
           <div className="event-list">
             {latestEvents.map((item) => (
