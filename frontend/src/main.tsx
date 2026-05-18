@@ -30,7 +30,8 @@ import {
   health,
   runCycle,
   runUntilFinished,
-  submitHumanAction
+  submitHumanAction,
+  submitPlayerAction
 } from "./api";
 import type {
   AgentDecisionRequest,
@@ -38,6 +39,7 @@ import type {
   Camp,
   GameEventPayload,
   GameState,
+  HumanSeatLink,
   LiveMessage,
   PendingHumanAction,
   PersistedEvent,
@@ -47,6 +49,29 @@ import type {
 import "./styles.css";
 
 const STORAGE_KEY = "werewolf:lastGameId";
+const SEAT_TOKEN_STORAGE_KEY = "werewolf:seatTokens";
+type SeatTokenStore = Record<string, Record<string, string>>;
+
+function readSeatTokenStore(): SeatTokenStore {
+  try {
+    const raw = localStorage.getItem(SEAT_TOKEN_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSeatTokenStore(store: SeatTokenStore) {
+  try {
+    localStorage.setItem(SEAT_TOKEN_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // Ignore localStorage failures in private/incognito contexts.
+  }
+}
+
+function getStoredSeatToken(gameId: string, seatNo: number): string | null {
+  return readSeatTokenStore()[gameId]?.[String(seatNo)] ?? null;
+}
 
 const phaseLabels: Record<string, string> = {
   setup: "准备",
@@ -280,8 +305,33 @@ function App() {
   const [viewError, setViewError] = useState<string | null>(null);
   const [actionForm, setActionForm] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [seatTokenStore, setSeatTokenStore] = useState<SeatTokenStore>(() => readSeatTokenStore());
 
   const currentGameId = game?.game_id ?? gameIdInput.trim();
+  const currentSeatTokens = currentGameId ? seatTokenStore[currentGameId] ?? {} : {};
+  const storedSeatLinks: HumanSeatLink[] = currentGameId
+    ? Object.entries(currentSeatTokens).map(([seat, token]) => ({
+        seat_no: Number(seat),
+        token,
+        path: `/play/${currentGameId}/${seat}?token=${encodeURIComponent(token)}`
+      }))
+    : [];
+  const playerLinks = game?.human_seat_links?.length ? game.human_seat_links : storedSeatLinks;
+
+  function storeLinks(gameId: string, links: HumanSeatLink[]) {
+    const nextStore = {
+      ...seatTokenStore,
+      [gameId]: {
+        ...(seatTokenStore[gameId] ?? {}),
+      }
+    };
+    for (const link of links) {
+      nextStore[gameId][String(link.seat_no)] = link.token;
+    }
+    setSeatTokenStore(nextStore);
+    writeSeatTokenStore(nextStore);
+  }
+
   const aliveCount = game?.players.filter((p) => p.status.alive).length ?? 0;
   const wolfAlive =
     game?.players.filter((p) => p.status.alive && p.camp === "werewolf").length ?? 0;
@@ -439,7 +489,7 @@ function App() {
   async function loadPlayerView(seatNo: number) {
     setViewError(null);
     try {
-      const v = await getPlayerView(currentGameId, seatNo);
+      const v = await getPlayerView(currentGameId, seatNo, currentSeatTokens[String(seatNo)]);
       setPlayerView(v);
     } catch (err) {
       setViewError(err instanceof Error ? err.message : "加载失败");
@@ -497,7 +547,9 @@ function App() {
     setSubmitting(true);
     setError(null);
     try {
-      const nextGame = await submitHumanAction(currentGameId, seatNo, body);
+      const nextGame = await submitHumanAction(
+        currentGameId, seatNo, body, currentSeatTokens[String(seatNo)]
+      );
       setGame(nextGame);
       setEvents(await getEvents(nextGame.game_id));
       setActionForm({});
@@ -652,6 +704,9 @@ function App() {
                   setPlayerView(null);
                   setViewError(null);
                   setActionForm({});
+                  if (next.human_seat_links) {
+                    storeLinks(next.game_id, next.human_seat_links);
+                  }
                 })
               }
             >
@@ -754,6 +809,36 @@ function App() {
               </div>
             )}
           </div>
+
+          {playerLinks.length > 0 && (
+            <div className="player-links" style={{ marginTop: 12, borderTop: "1px solid #e0e7e2", paddingTop: 10 }}>
+              <div className="section-title compact">
+                <Users size={14} />
+                <h3>玩家入口</h3>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {playerLinks.map((link) => (
+                  <div key={link.seat_no} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                    <StatusPill>{link.seat_no}号</StatusPill>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#526359", fontFamily: "monospace", fontSize: 11 }}>
+                      {window.location.origin}{link.path}
+                    </span>
+                    <button
+                      type="button"
+                      className="tiny"
+                      onClick={() => {
+                        const url = `${window.location.origin}${link.path}`;
+                        window.open(url, "_blank");
+                      }}
+                      style={{ flexShrink: 0, minHeight: 26, padding: "2px 8px", fontSize: 11 }}
+                    >
+                      打开
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {busy && (
             <div className="notice">
@@ -1099,8 +1184,313 @@ function App() {
   );
 }
 
+function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
+  const [view, setView] = useState<PlayerView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionForm, setActionForm] = useState<Record<string, unknown>>({});
+
+  const params = new URLSearchParams(window.location.search);
+  const tokenFromQuery = params.get("token");
+  const [token, setToken] = useState<string | null>(() =>
+    tokenFromQuery || getStoredSeatToken(gameId, seatNo)
+  );
+
+  useEffect(() => {
+    if (tokenFromQuery) {
+      const store = readSeatTokenStore();
+      const nextStore = {
+        ...store,
+        [gameId]: {
+          ...(store[gameId] ?? {}),
+          [String(seatNo)]: tokenFromQuery,
+        },
+      };
+      writeSeatTokenStore(nextStore);
+      setToken(tokenFromQuery);
+    }
+  }, [gameId, tokenFromQuery, seatNo]);
+
+  const pendingAction: PendingHumanAction | null = view?.pending_human_action ?? null;
+
+  async function loadView({ silent = false }: { silent?: boolean } = {}) {
+    if (!token) {
+      if (!silent) setError("缺少 seat token，无法加载玩家视角");
+      return;
+    }
+    if (!silent) {
+      setError(null);
+      setRefreshing(true);
+    }
+    try {
+      const v = await getPlayerView(gameId, seatNo, token);
+      setView(v);
+    } catch (err) {
+      if (!silent) setError(err instanceof Error ? err.message : "加载失败");
+    } finally {
+      if (!silent) setRefreshing(false);
+    }
+  }
+
+  async function handleSubmit() {
+    if (!pendingAction) return;
+    const selected = actionForm["selected_action_type"];
+    if (typeof selected !== "string") { setError("请选择动作"); return; }
+    const actionObj: Record<string, unknown> = { action_type: selected };
+    if (selected === "speak") {
+      const content = actionForm["speak_content"];
+      if (typeof content !== "string" || !content.trim()) { setError("发言内容不能为空"); return; }
+      actionObj["content"] = content;
+    } else if (selected === "vote" || selected === "sheriff_vote") {
+      const target = actionForm["target_seat_no"];
+      actionObj["target_seat_no"] = target === "abstain" ? null : typeof target === "number" ? target : null;
+    } else {
+      const target = actionForm["target_seat_no"];
+      if (typeof target !== "number") { setError("请选择目标"); return; }
+      actionObj["target_seat_no"] = target;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const nextView = await submitPlayerAction(
+        gameId,
+        seatNo,
+        { action: actionObj, reasoning_summary: "" },
+        token
+      );
+      setView(nextView);
+      setActionForm({});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "提交失败");
+      await loadView({ silent: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    loadView();
+    const timer = window.setInterval(() => loadView({ silent: true }), 5000);
+    return () => window.clearInterval(timer);
+  }, [gameId, seatNo, token]);
+
+  const visibleEvents = useMemo(
+    () =>
+      (view?.public_events ?? [])
+        .map((event, sequence) => ({ sequence, event, created_at: null }))
+        .filter(shouldShowEvent)
+        .reverse(),
+    [view?.public_events]
+  );
+  const gamePhase = view?.phase ?? "setup";
+  const gameRound = view?.round ?? 0;
+
+  return (
+    <main className="app-shell player-page">
+      <header className="topbar">
+        <div>
+          <div className="eyebrow">Werewolf Agent Team · 玩家</div>
+          <h1>{seatNo}号座位 · {view ? (roleLabels[view.own_role] ?? view.own_role) : "载入中..."}</h1>
+        </div>
+        <div className="topbar-meta">
+          <StatusPill tone={token ? "good" : "bad"}>
+            {token ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {refreshing ? "刷新中" : token ? "已授权" : "缺少 token"}
+          </StatusPill>
+          <span className="api-base">{gameId}</span>
+        </div>
+      </header>
+
+      <section className="summary-band">
+        <div className="metric"><span>对局</span><strong>{gameId}</strong></div>
+        <div className="metric"><span>座位</span><strong>{seatNo}号</strong></div>
+        <div className="metric"><span>阶段</span><strong>{phaseLabels[gamePhase]}</strong></div>
+        <div className="metric"><span>轮次</span><strong>第 {gameRound} 轮</strong></div>
+        <div className="metric"><span>状态</span><strong>{pendingAction ? "轮到你" : "等待中"}</strong></div>
+        <div className="metric"><span>Game ID</span><strong style={{ fontSize: 12 }}>{gameId}</strong></div>
+      </section>
+
+      {error && (
+        <div className="notice error" style={{ marginBottom: 12 }}>
+          <CircleAlert size={16} /> {error}
+          <button type="button" className="tiny" onClick={() => loadView()} style={{ marginLeft: "auto" }}>重试</button>
+        </div>
+      )}
+
+      <div className="player-workspace">
+        {/* Left: player info */}
+        <section className="player-info-card">
+          <div className="section-title">
+            <Eye size={18} />
+            <h2>我的信息</h2>
+          </div>
+          {view ? (
+            <div className="view-meta">
+              <div className="view-meta-row">
+                <span>身份</span>
+                <strong>
+                  {roleLabels[view.own_role] ?? view.own_role}
+                  <StatusPill tone={view.own_camp === "werewolf" ? "bad" : "good"}>
+                    {campLabels[view.own_camp]}
+                  </StatusPill>
+                </strong>
+              </div>
+              {view.known_wolf_team.length > 0 && (
+                <div className="view-meta-row">
+                  <span>狼队友</span>
+                  <strong>{view.known_wolf_team.map((s) => `${s}号`).join("、")}</strong>
+                </div>
+              )}
+              {Object.keys(view.private_info).length > 0 && (
+                <div className="view-meta-row">
+                  <span>私有信息</span>
+                  <pre className="mini-pre">{JSON.stringify(view.private_info, null, 2)}</pre>
+                </div>
+              )}
+              <div className="view-meta-row">
+                <span>可用动作</span>
+                <div className="action-tags">
+                  {view.available_actions.map((a) => <StatusPill key={a}>{a}</StatusPill>)}
+                  {!view.available_actions.length && "无"}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="empty slim">{token ? "载入中..." : "缺少 token，无法加载视角"}</div>
+          )}
+        </section>
+
+        {/* Middle: pending action form */}
+        <section className="player-action-card">
+          <div className="section-title">
+            <Play size={18} />
+            <h2>当前操作</h2>
+          </div>
+          {pendingAction && pendingAction.seat_no === seatNo ? (
+            <div className="action-form">
+              <p style={{ fontSize: 13, color: "#6b5612", marginBottom: 8 }}>
+                等待你执行 {phaseLabels[pendingAction.phase]} 第{pendingAction.round}轮动作
+              </p>
+              <div className="field-row">
+                <label>动作类型</label>
+                <div className="segmented">
+                  {pendingAction.available_actions.map((a) => (
+                    <button key={a} type="button" className={actionForm["selected_action_type"] === a ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, selected_action_type: a, target_seat_no: undefined, speak_content: undefined }))}>
+                      {a}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {actionForm["selected_action_type"] === "speak" && (
+                <div className="field-row">
+                  <label>发言</label>
+                  <textarea className="textarea" rows={3} placeholder="输入发言..."
+                    value={typeof actionForm["speak_content"] === "string" ? (actionForm["speak_content"] as string) : ""}
+                    onChange={(e) => setActionForm((prev) => ({ ...prev, speak_content: e.target.value }))} />
+                </div>
+              )}
+              {(actionForm["selected_action_type"] === "vote" || actionForm["selected_action_type"] === "sheriff_vote") && (
+                <div className="field-row">
+                  <label>投票</label>
+                  <div className="target-grid">
+                    <button type="button" className={actionForm["target_seat_no"] === "abstain" ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: "abstain" }))}>弃票</button>
+                    {(view?.players ?? []).filter(playerAlive).map((p) => (
+                      <button key={p.seat_no} type="button" className={actionForm["target_seat_no"] === p.seat_no ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: p.seat_no }))}>{p.seat_no}号</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(actionForm["selected_action_type"] === "werewolf_kill" || actionForm["selected_action_type"] === "seer_check" || actionForm["selected_action_type"] === "witch_poison") && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {(view?.players ?? []).filter((p) => playerAlive(p) && p.seat_no !== seatNo).map((p) => (
+                      <button key={p.seat_no} type="button" className={actionForm["target_seat_no"] === p.seat_no ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: p.seat_no }))}>{p.seat_no}号</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {actionForm["selected_action_type"] === "witch_save" && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {(view?.players ?? []).filter(playerAlive).map((p) => (
+                      <button key={p.seat_no} type="button" className={actionForm["target_seat_no"] === p.seat_no ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: p.seat_no }))}>{p.seat_no}号</button>
+                    ))}
+                  </div>
+                  {pendingAction.private_info?.pending_wolf_kill_target != null && (
+                    <div className="hint" style={{ marginTop: 4 }}>建议目标：{String(pendingAction.private_info.pending_wolf_kill_target)}号</div>
+                  )}
+                </div>
+              )}
+              <button className="primary" type="button" disabled={busy} onClick={handleSubmit} style={{ marginTop: 8, width: "100%" }}>
+                {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                {busy ? "提交中..." : `提交 ${seatNo}号动作`}
+              </button>
+            </div>
+          ) : pendingAction && pendingAction.seat_no !== seatNo ? (
+            <div className="empty slim">等待 {pendingAction.seat_no}号操作</div>
+          ) : (
+            <div className="empty slim">当前没有等待你的操作</div>
+          )}
+        </section>
+
+        {/* Right: events + alive players */}
+        <section className="player-events-card">
+          <div className="section-title">
+            <MessageCircle size={18} />
+            <h2>存活玩家</h2>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+            {(view?.players ?? []).filter(playerAlive).map((p) => (
+              <StatusPill key={p.seat_no} tone={p.seat_no === seatNo ? "good" : "neutral"}>
+                {p.seat_no}号 {p.name}
+              </StatusPill>
+            ))}
+          </div>
+
+          <div className="section-title compact">
+            <Eye size={16} />
+            <h3>事件日志</h3>
+          </div>
+          <div className="event-list" style={{ maxHeight: 420 }}>
+            {visibleEvents.map((item) => (
+              <article className="event-row" key={item.sequence}>
+                <div className="event-meta">
+                  <span>#{item.sequence}</span>
+                  <StatusPill>{item.event.type}</StatusPill>
+                </div>
+                <div>
+                  <h3>{eventTitle(item.event)}</h3>
+                  <p>{eventBody(item.event)}</p>
+                </div>
+              </article>
+            ))}
+            {!visibleEvents.length && <div className="empty slim">暂无事件</div>}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function Root() {
+  const pathname = window.location.pathname;
+  const match = pathname.match(/^\/play\/([^/]+)\/(\d+)/);
+  if (match) {
+    return <PlayerApp gameId={match[1]} seatNo={parseInt(match[2], 10)} />;
+  }
+  return <App />;
+}
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <Root />
   </React.StrictMode>
 );

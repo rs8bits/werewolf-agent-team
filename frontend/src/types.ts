@@ -50,6 +50,7 @@ export interface PlayerView {
   sheriff_seat_no?: number | null;
   private_info: Record<string, unknown>;
   available_actions: string[];
+  pending_human_action?: PendingHumanAction | null;
 }
 
 export interface PendingHumanAction {
@@ -64,6 +65,12 @@ export interface PendingHumanAction {
 export interface AgentDecisionRequest {
   action: Record<string, unknown>;
   reasoning_summary?: string;
+}
+
+export interface HumanSeatLink {
+  seat_no: number;
+  token: string;
+  path: string;
 }
 
 export interface PersistedEvent {
@@ -83,6 +90,7 @@ export interface GameState {
   runtime_state?: Record<string, unknown>;
   sheriff_seat_no?: number | null;
   winner?: Camp | null;
+  human_seat_links?: HumanSeatLink[];
 }
 
 export interface CreateGameRequest {

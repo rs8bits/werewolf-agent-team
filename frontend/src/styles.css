@@ -733,6 +733,34 @@ h3 {
   font-size: 11px;
 }
 
+/* ── Player page layout ────────────────────────────────────────────────── */
+
+.player-page .player-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.player-info-card,
+.player-action-card,
+.player-events-card {
+  border: 1px solid #cbd5ce;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.player-links {
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .player-page .player-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

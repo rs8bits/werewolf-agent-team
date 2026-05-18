@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 import uuid
 from dataclasses import replace
 
@@ -29,6 +31,10 @@ from app.state.schemas import GamePhase, GameState, PlayerType
 
 def _short_uuid() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 class GameSessionService:
@@ -168,9 +174,10 @@ class GameSessionService:
         rule_config: RuleConfig | None = None,
         seed: int | None = None,
         human_seats: list[int] | None = None,
-    ) -> GameState:
+    ) -> tuple[GameState, dict[int, str]]:
         if agent_mode not in {"scripted", "llm"}:
             raise ValueError("agent_mode must be 'scripted' or 'llm'")
+        human_tokens: dict[int, str] = {}
         if human_seats is not None:
             if player_count not in (6,):
                 raise ValueError(
@@ -187,6 +194,7 @@ class GameSessionService:
                         f"Duplicate human_seat {seat}"
                     )
                 seen.add(seat)
+                human_tokens[seat] = secrets.token_urlsafe(24)
         setup = get_role_setup(player_count)
         rules = rule_config or default_rule_config(player_count)
         if agent_mode == "llm":
@@ -212,8 +220,13 @@ class GameSessionService:
             model=model,
             seed=seed,
         )
+        # Store token hashes in runtime_state (never persist plaintext tokens)
+        if human_tokens:
+            game_state.runtime_state.seat_token_hashes = {
+                seat: _sha256(token) for seat, token in human_tokens.items()
+            }
         self._save_game_and_events(game_state)
-        return game_state
+        return game_state, human_tokens
 
     def get_game(self, game_id: str) -> GameState | None:
         return self._load_game_state(game_id)
@@ -237,7 +250,19 @@ class GameSessionService:
             if completed_cycles >= max_cycles:
                 return result
 
-    def get_player_view(self, game_id: str, seat_no: int) -> dict | None:
+    def _validate_seat_token(
+        self, game_state: GameState, seat_no: int, token: str | None
+    ) -> None:
+        hashes = game_state.runtime_state.seat_token_hashes
+        expected_hash = hashes.get(seat_no)
+        if expected_hash is None:
+            return  # Not a token-protected seat (old game or non-human seat)
+        if token is None or not secrets.compare_digest(_sha256(token), expected_hash):
+            raise PermissionError("无权访问该座位")
+
+    def get_player_view(
+        self, game_id: str, seat_no: int, token: str | None = None
+    ) -> dict | None:
         from app.state.view_builder import build_player_view
 
         game_state = self._load_game_state(game_id)
@@ -245,17 +270,21 @@ class GameSessionService:
             return None
         if not any(p.seat_no == seat_no for p in game_state.players):
             return None
+        self._validate_seat_token(game_state, seat_no, token)
         view = build_player_view(game_state, seat_no)
         return view.model_dump()
 
     def submit_human_action(
-        self, game_id: str, seat_no: int, decision_data: dict
+        self, game_id: str, seat_no: int, decision_data: dict,
+        token: str | None = None,
     ) -> GameState:
         from app.agents.schemas import AgentDecision
 
         game_state = self._load_game_state(game_id)
         if game_state is None:
             raise ValueError(f"对局不存在: {game_id}")
+
+        self._validate_seat_token(game_state, seat_no, token)
 
         rt = game_state.runtime_state
         pending = rt.pending_human_action

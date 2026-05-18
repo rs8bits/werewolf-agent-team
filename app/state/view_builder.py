@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.state.schemas import Camp, GamePhase, GameState, PlayerType, Role
+from app.state.schemas import Camp, GamePhase, GameState, PendingHumanAction, PlayerType, Role
 
 
 # ── View models ────────────────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ class PlayerView(BaseModel):
     sheriff_seat_no: int | None = Field(default=None, ge=1)
     private_info: dict[str, Any] = Field(default_factory=dict)
     available_actions: list[str] = Field(default_factory=list)
+    pending_human_action: PendingHumanAction | None = None
 
 
 # ── Action helpers ─────────────────────────────────────────────────────────────
@@ -253,6 +254,9 @@ def build_player_view(
     if private_info_override:
         private_info.update(private_info_override)
 
+    pending = game_state.runtime_state.pending_human_action
+    visible_pending = pending if pending is not None and pending.seat_no == seat_no else None
+
     return PlayerView(
         game_id=game_state.game_id,
         viewer_seat_no=seat_no,
@@ -266,4 +270,5 @@ def build_player_view(
         sheriff_seat_no=game_state.sheriff_seat_no,
         private_info=private_info,
         available_actions=actions,
+        pending_human_action=visible_pending,
     )

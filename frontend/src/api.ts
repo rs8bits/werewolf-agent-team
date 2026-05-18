@@ -102,21 +102,47 @@ export async function getEvents(gameId: string): Promise<PersistedEvent[]> {
 
 export async function getPlayerView(
   gameId: string,
-  seatNo: number
+  seatNo: number,
+  token?: string | null
 ): Promise<PlayerView> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["X-Seat-Token"] = token;
+  }
   return request(
     `/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(seatNo)}/view`,
-    { method: "GET" }
+    { method: "GET", headers: Object.keys(headers).length > 0 ? headers : undefined }
   );
 }
 
 export async function submitHumanAction(
   gameId: string,
   seatNo: number,
-  body: AgentDecisionRequest
+  body: AgentDecisionRequest,
+  token?: string | null
 ): Promise<GameState> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["X-Seat-Token"] = token;
+  }
   return request(
     `/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(seatNo)}/actions`,
-    { method: "POST", body: JSON.stringify(body) }
+    { method: "POST", body: JSON.stringify(body), headers: Object.keys(headers).length > 0 ? headers : undefined }
+  );
+}
+
+export async function submitPlayerAction(
+  gameId: string,
+  seatNo: number,
+  body: AgentDecisionRequest,
+  token?: string | null
+): Promise<PlayerView> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["X-Seat-Token"] = token;
+  }
+  return request(
+    `/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(seatNo)}/actions?response_mode=view`,
+    { method: "POST", body: JSON.stringify(body), headers: Object.keys(headers).length > 0 ? headers : undefined }
   );
 }

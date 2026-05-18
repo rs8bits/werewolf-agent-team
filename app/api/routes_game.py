@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -64,7 +64,7 @@ def create_game(
     if body.rule_config:
         rules = RuleConfig.model_validate({**rules.model_dump(), **body.rule_config})
     try:
-        game_state = service.create_game(
+        game_state, human_tokens = service.create_game(
             player_names=body.player_names,
             player_count=body.player_count,
             agent_mode=body.agent_mode,
@@ -75,7 +75,17 @@ def create_game(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return game_state.model_dump()
+    result = game_state.model_dump()
+    if human_tokens:
+        result["human_seat_links"] = [
+            {
+                "seat_no": seat,
+                "token": token,
+                "path": f"/play/{game_state.game_id}/{seat}?token={token}",
+            }
+            for seat, token in sorted(human_tokens.items())
+        ]
+    return result
 
 
 @router.get("/{game_id}")
@@ -130,11 +140,26 @@ def list_events(game_id: str, db: Session = Depends(get_db)):
     return service.list_events(game_id)
 
 
+def _extract_token(
+    x_seat_token: str | None = Header(default=None, alias="X-Seat-Token"),
+    token: str | None = Query(default=None),
+) -> str | None:
+    return x_seat_token or token
+
+
 @router.get("/{game_id}/players/{seat_no}/view")
-def get_player_view(game_id: str, seat_no: int, db: Session = Depends(get_db)):
+def get_player_view(
+    game_id: str,
+    seat_no: int,
+    seat_token: str | None = Depends(_extract_token),
+    db: Session = Depends(get_db),
+):
     """查询玩家私有视图（信息隔离，不含 truth_state）。"""
     service = GameSessionService(db)
-    view = service.get_player_view(game_id, seat_no)
+    try:
+        view = service.get_player_view(game_id, seat_no, token=seat_token)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     if view is None:
         raise HTTPException(status_code=404, detail=f"对局或玩家不存在: {game_id}/{seat_no}")
     return view
@@ -145,12 +170,18 @@ def submit_human_action(
     game_id: str,
     seat_no: int,
     body: dict[str, Any],
+    seat_token: str | None = Depends(_extract_token),
+    response_mode: Literal["game", "view"] = Query(default="game"),
     db: Session = Depends(get_db),
 ):
     """真人玩家提交动作，提交后自动推进到下一个阻塞点。"""
     service = GameSessionService(db)
     try:
-        game_state = service.submit_human_action(game_id, seat_no, body)
+        game_state = service.submit_human_action(
+            game_id, seat_no, body, token=seat_token
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except AgentDecisionError as exc:
         raise _agent_decision_http_error(exc)
     except ValueError as exc:
@@ -162,4 +193,9 @@ def submit_human_action(
         raise HTTPException(status_code=400, detail=detail)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"无效的请求体：{exc}")
+    if response_mode == "view":
+        view = service.get_player_view(game_id, seat_no, token=seat_token)
+        if view is None:
+            raise HTTPException(status_code=404, detail=f"对局或玩家不存在: {game_id}/{seat_no}")
+        return view
     return game_state.model_dump()
