@@ -266,11 +266,17 @@ function playerSubtitle(player: PlayerState): string {
 function RoundTable({
   game,
   activeSeatNo,
-  activeSpeech
+  activeSpeech,
+  showAllIdentities = false,
+  revealedSeats = new Set(),
+  onToggleSeatIdentity,
 }: {
   game: GameState | null;
   activeSeatNo: number | null;
   activeSpeech: PersistedEvent | null;
+  showAllIdentities?: boolean;
+  revealedSeats?: Set<number>;
+  onToggleSeatIdentity?: (seatNo: number) => void;
 }) {
   if (!game) {
     return <div className="empty">还没有对局</div>;
@@ -291,22 +297,25 @@ function RoundTable({
           const x = 50 + Math.cos(angle) * seatRadius;
           const y = 50 + Math.sin(angle) * seatRadius;
           const isActive = activeSeatNo === player.seat_no;
+          const identityVisible = showAllIdentities || revealedSeats.has(player.seat_no);
           return (
-            <article
-              className={`table-seat ${player.camp} ${player.status.alive ? "" : "dead"} ${
+            <button
+              className={`table-seat ${identityVisible ? player.camp : ""} ${player.status.alive ? "" : "dead"} ${
                 isActive ? "active" : ""
-              }`}
+              } ${identityVisible ? "identity-visible" : "identity-hidden"}`}
               key={player.seat_no}
               style={{ left: `${x}%`, top: `${y}%` }}
+              onClick={() => onToggleSeatIdentity?.(player.seat_no)}
+              aria-label={`${player.seat_no}号 ${player.name} - ${identityVisible ? playerSubtitle(player) : "身份隐藏"}`}
             >
               <div className="table-seat-head">
                 <strong>{player.seat_no}号</strong>
                 {game.sheriff_seat_no === player.seat_no && <Crown size={12} />}
               </div>
               <span>{player.name}</span>
-              <small>{playerSubtitle(player)}</small>
+              <small>{identityVisible ? playerSubtitle(player) : "身份隐藏"}</small>
               <em>{player.status.alive ? "存活" : "死亡"}</em>
-            </article>
+            </button>
           );
         })}
       </div>
@@ -392,6 +401,8 @@ function App() {
   const [viewError, setViewError] = useState<string | null>(null);
   const [actionForm, setActionForm] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [showAllIdentities, setShowAllIdentities] = useState(false);
+  const [revealedSeats, setRevealedSeats] = useState<Set<number>>(new Set());
   const [seatTokenStore, setSeatTokenStore] = useState<SeatTokenStore>(() => readSeatTokenStore());
 
   const currentGameId = game?.game_id ?? gameIdInput.trim();
@@ -455,6 +466,8 @@ function App() {
     setGame(nextGame);
     setEvents(nextEvents);
     setGameIdInput(trimmed);
+    setShowAllIdentities(false);
+    setRevealedSeats(new Set());
     localStorage.setItem(STORAGE_KEY, trimmed);
   }
 
@@ -806,6 +819,8 @@ function App() {
                   setPlayerView(null);
                   setViewError(null);
                   setActionForm({});
+                  setShowAllIdentities(false);
+                  setRevealedSeats(new Set());
                   if (next.human_seat_links) {
                     storeLinks(next.game_id, next.human_seat_links);
                   }
@@ -960,8 +975,46 @@ function App() {
           <div className="section-title">
             <Swords size={18} />
             <h2>圆桌席位</h2>
+            <div className="identity-toggles">
+              <button
+                type="button"
+                className="tiny"
+                onClick={() => {
+                  setShowAllIdentities(!showAllIdentities);
+                  if (!showAllIdentities) setRevealedSeats(new Set());
+                }}
+              >
+                {showAllIdentities ? "隐藏身份" : "显示身份"}
+              </button>
+              {revealedSeats.size > 0 && !showAllIdentities && (
+                <button
+                  type="button"
+                  className="tiny"
+                  onClick={() => setRevealedSeats(new Set())}
+                >
+                  全部收起
+                </button>
+              )}
+            </div>
           </div>
-          <RoundTable game={game} activeSeatNo={activeSeatNo} activeSpeech={latestSpeech} />
+          <RoundTable
+            game={game}
+            activeSeatNo={activeSeatNo}
+            activeSpeech={latestSpeech}
+            showAllIdentities={showAllIdentities}
+            revealedSeats={revealedSeats}
+            onToggleSeatIdentity={(seatNo) => {
+              setRevealedSeats((prev) => {
+                const next = new Set(prev);
+                if (next.has(seatNo)) {
+                  next.delete(seatNo);
+                } else {
+                  next.add(seatNo);
+                }
+                return next;
+              });
+            }}
+          />
           <div className="speech-order">
             <div className="section-title compact">
               <MessageCircle size={16} />

@@ -204,6 +204,18 @@ h3 {
   color: #203128;
 }
 
+.identity-toggles {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.identity-toggles .tiny {
+  min-height: 26px;
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: 74px minmax(0, 1fr);
@@ -371,6 +383,23 @@ h3 {
   box-shadow: 0 8px 24px rgb(32 49 40 / 8%);
 }
 
+/* Reset button defaults when table-seat is a button */
+button.table-seat {
+  cursor: pointer;
+  font: inherit;
+  text-align: inherit;
+  color: inherit;
+}
+
+button.table-seat:hover:not(:disabled) {
+  border-color: #8a9e93;
+  transform: translate(-50%, -50%) translateY(-1px);
+}
+
+button.table-seat:active:not(:disabled) {
+  transform: translate(-50%, -50%) translateY(0);
+}
+
 .round-table.dense .table-seat {
   width: 106px;
   min-height: 68px;
@@ -385,12 +414,20 @@ h3 {
   padding: 16px;
 }
 
-.table-seat.werewolf {
+.table-seat.identity-visible.werewolf {
   border-left-color: #b84945;
 }
 
-.table-seat.good {
+.table-seat.identity-visible.good {
   border-left-color: #2d7a58;
+}
+
+.table-seat.identity-hidden {
+  border-left-color: #879389;
+}
+
+.table-seat.identity-hidden small {
+  font-style: italic;
 }
 
 .table-seat.dead {
