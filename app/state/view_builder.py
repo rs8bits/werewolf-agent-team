@@ -168,6 +168,15 @@ def _visible_public_events(game_state: GameState) -> list[dict[str, Any]]:
     return _compress_old_speeches(events, game_state.public_state.round, retention)
 
 
+def _pending_unannounced_deaths(game_state: GameState) -> set[int]:
+    announcement = game_state.runtime_state.pending_night_announcement
+    if not announcement:
+        return set()
+    night_resolved = announcement.get("night_resolved", {})
+    deaths = night_resolved.get("deaths", [])
+    return {int(seat_no) for seat_no in deaths}
+
+
 def _private_info(game_state: GameState, seat_no: int, role: Role) -> dict[str, Any]:
     runtime = game_state.runtime_state
     info: dict[str, Any] = {
@@ -220,14 +229,15 @@ def build_player_view(
     private_info_override: dict[str, Any] | None = None,
 ) -> PlayerView:
     viewer = _find_player(game_state, seat_no)
+    pending_deaths = _pending_unannounced_deaths(game_state)
 
     visible_players = [
         VisiblePlayer(
             seat_no=p.seat_no,
             name=p.name,
             player_type=p.player_type,
-            alive=p.status.alive,
-            can_vote=p.status.can_vote,
+            alive=True if p.seat_no in pending_deaths else p.status.alive,
+            can_vote=True if p.seat_no in pending_deaths else p.status.can_vote,
         )
         for p in game_state.players
     ]

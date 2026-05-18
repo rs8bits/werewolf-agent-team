@@ -149,6 +149,7 @@ class RuntimeState(BaseModel):
     mixed_sheriff_round: int = 0
     mixed_pk_tied_seats: list[int] = Field(default_factory=list)
     mixed_pk_votes: dict[int, int | None] = Field(default_factory=dict)
+    pending_night_announcement: dict[str, Any] | None = None
     seat_token_hashes: dict[int, str] = Field(default_factory=dict)
 
 

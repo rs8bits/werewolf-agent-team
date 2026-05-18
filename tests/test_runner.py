@@ -699,6 +699,41 @@ def _sheriff_election_helpers() -> tuple[
 
 
 class TestSheriffElection:
+    def test_night_announcement_is_after_sheriff_election(self):
+        """First-day sheriff election should happen before night result is announced."""
+        gs = _init_12p_with_sheriff("test-sheriff-night-order")
+
+        night_agents = _make_fake_agents(gs, {})
+        run_night_phase(gs, night_agents)
+
+        event_types_after_night = [e["type"] for e in gs.public_state.public_events]
+        assert "night_resolved" not in event_types_after_night
+        assert gs.runtime_state.pending_night_announcement is not None
+
+        first_alive = next(p.seat_no for p in gs.players if p.status.alive)
+        day_agents: dict[int, FakeAgent] = {}
+        for p in gs.players:
+            day_agents[p.seat_no] = FakeAgent(
+                p.role,
+                [
+                    _make_run_for_sheriff_decision(
+                        run=p.seat_no == first_alive,
+                        content=f"我是{p.seat_no}号，竞选警长。"
+                        if p.seat_no == first_alive
+                        else None,
+                    ),
+                    _make_sheriff_vote_decision(first_alive),
+                    _make_speak_decision(f"我是{p.seat_no}号。"),
+                ],
+            )
+
+        run_day_phase(gs, day_agents)
+
+        event_types = [e["type"] for e in gs.public_state.public_events]
+        assert event_types.index("sheriff_elected") < event_types.index("night_resolved")
+        assert event_types.index("night_resolved") < event_types.index("speech")
+        assert gs.runtime_state.pending_night_announcement is None
+
     def test_no_candidates_no_sheriff(self):
         """All agents decline to run → sheriff_seat_no=None, reason=no_candidates."""
         gs = _init_12p_with_sheriff("test-sheriff-001")

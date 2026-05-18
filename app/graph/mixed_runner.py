@@ -18,6 +18,8 @@ from app.graph.main_graph import (
     _alive_seats,
     _build_action_view,
     _log_event,
+    _publish_pending_night_announcement,
+    _store_or_publish_night_announcement,
 )
 from app.state.schemas import (
     GamePhase,
@@ -89,6 +91,23 @@ def _majority_wolf_target(game_state: GameState) -> int | None:
     max_count = max(counter.values())
     top = [t for t, c in counter.items() if c == max_count]
     return min(top)
+
+
+def _start_sheriff_election(game_state: GameState) -> None:
+    rt = game_state.runtime_state
+    rt.mixed_stage = "sheriff_run"
+    rt.mixed_cursor = 0
+    rt.mixed_sheriff_candidates = []
+    rt.mixed_sheriff_votes = {}
+    rt.mixed_sheriff_round = 0
+
+
+def _continue_after_sheriff_election(game_state: GameState) -> None:
+    rt = game_state.runtime_state
+    _publish_pending_night_announcement(game_state)
+    rt.mixed_stage = "night_post_deaths"
+    rt.mixed_cursor = 0
+    rt.mixed_death_effect_stage = rt.mixed_death_effect_stage or "badge"
 
 
 # ── Mixed hunter shot helper ───────────────────────────────────────────────
@@ -379,13 +398,17 @@ def _step_night_resolve(
         seer_check_target=rt.mixed_seer_target,
         guard_target=None,
     )
+    event_start_index = len(game_state.public_state.public_events)
     result = resolve_night(game_state, actions)
     rt.pending_wolf_kill_target = None
 
-    _log_event(game_state, "night_resolved",
-               deaths=result.deaths,
-               death_reasons=result.death_reasons,
-               seer_result=result.seer_result.value if result.seer_result else None)
+    _store_or_publish_night_announcement(
+        game_state,
+        event_start_index=event_start_index,
+        deaths=result.deaths,
+        death_reasons=result.death_reasons,
+        seer_result=result.seer_result.value if result.seer_result else None,
+    )
 
     rt.mixed_death_queue = list(result.deaths)
     rt.mixed_death_reasons = dict(result.death_reasons)
@@ -400,24 +423,22 @@ def _step_night_post_deaths(
 ) -> MixedResult | None:
     rt = game_state.runtime_state
 
+    if (
+        game_state.rule_config.enable_sheriff
+        and not rt.sheriff_election_done
+    ):
+        _start_sheriff_election(game_state)
+        return None
+
     if rt.mixed_cursor >= len(rt.mixed_death_queue):
         winner = check_winner(game_state)
         if winner is not None:
+            _publish_pending_night_announcement(game_state)
             game_state.winner = winner
             game_state.public_state.phase = GamePhase.ended
             return MixedResult.ended
 
-        # Route to sheriff election or day speech
-        if (
-            game_state.rule_config.enable_sheriff
-            and not rt.sheriff_election_done
-        ):
-            rt.mixed_stage = "sheriff_run"
-            rt.mixed_cursor = 0
-            rt.mixed_sheriff_candidates = []
-            rt.mixed_sheriff_votes = {}
-            rt.mixed_sheriff_round = 0
-            return None
+        _publish_pending_night_announcement(game_state)
         rt.mixed_stage = "day_speech"
         rt.mixed_cursor = 0
         return None
@@ -465,8 +486,7 @@ def _step_sheriff_run(
         if not rt.mixed_sheriff_candidates:
             rt.sheriff_election_done = True
             _log_event(game_state, "sheriff_elected", sheriff_seat_no=None, reason="no_candidates")
-            rt.mixed_stage = "day_speech"
-            rt.mixed_cursor = 0
+            _continue_after_sheriff_election(game_state)
             return None
         rt.mixed_stage = "sheriff_vote_1"
         rt.mixed_cursor = 0
@@ -528,8 +548,7 @@ def _step_sheriff_vote(
             _log_event(game_state, "sheriff_elected", sheriff_seat_no=elected,
                        candidates=rt.mixed_sheriff_candidates,
                        vote_counts=result.vote_counts)
-            rt.mixed_stage = "day_speech"
-            rt.mixed_cursor = 0
+            _continue_after_sheriff_election(game_state)
             return None
 
         if election_round == 2:
@@ -540,8 +559,7 @@ def _step_sheriff_vote(
                        candidates=rt.mixed_sheriff_candidates,
                        pk_tied_seats=rt.mixed_pk_tied_seats,
                        vote_counts=result.vote_counts)
-            rt.mixed_stage = "day_speech"
-            rt.mixed_cursor = 0
+            _continue_after_sheriff_election(game_state)
             return None
 
         # Round 1 tie → PK

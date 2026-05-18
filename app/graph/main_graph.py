@@ -58,6 +58,81 @@ def _log_event(game_state: GameState, event_type: str, **kwargs: Any) -> None:
         sink(game_state, event)
 
 
+def _should_defer_night_announcement(game_state: GameState) -> bool:
+    return (
+        game_state.rule_config.enable_sheriff
+        and not game_state.runtime_state.sheriff_election_done
+    )
+
+
+def _night_resolved_payload(
+    game_state: GameState,
+    *,
+    deaths: list[int],
+    death_reasons: dict[int, str],
+    seer_result: str | None,
+) -> dict[str, Any]:
+    return {
+        "round": game_state.public_state.round,
+        "deaths": deaths,
+        "death_reasons": death_reasons,
+        "seer_result": seer_result,
+    }
+
+
+def _publish_night_announcement(
+    game_state: GameState,
+    announcement: dict[str, Any],
+) -> None:
+    for event in announcement.get("death_events", []):
+        game_state.public_state.public_events.append(event)
+
+    payload = announcement.get("night_resolved", {})
+    _log_event(
+        game_state,
+        "night_resolved",
+        deaths=payload.get("deaths", []),
+        death_reasons=payload.get("death_reasons", {}),
+        seer_result=payload.get("seer_result"),
+    )
+
+
+def _publish_pending_night_announcement(game_state: GameState) -> dict[str, Any] | None:
+    announcement = game_state.runtime_state.pending_night_announcement
+    if not announcement:
+        return None
+    game_state.runtime_state.pending_night_announcement = None
+    _publish_night_announcement(game_state, announcement)
+    return announcement
+
+
+def _store_or_publish_night_announcement(
+    game_state: GameState,
+    *,
+    event_start_index: int,
+    deaths: list[int],
+    death_reasons: dict[int, str],
+    seer_result: str | None,
+) -> None:
+    death_events = game_state.public_state.public_events[event_start_index:]
+    del game_state.public_state.public_events[event_start_index:]
+
+    announcement = {
+        "death_events": death_events,
+        "night_resolved": _night_resolved_payload(
+            game_state,
+            deaths=deaths,
+            death_reasons=death_reasons,
+            seer_result=seer_result,
+        ),
+    }
+
+    if _should_defer_night_announcement(game_state):
+        game_state.runtime_state.pending_night_announcement = announcement
+    else:
+        _publish_night_announcement(game_state, announcement)
+
+
 def _alive_seats(game_state: GameState) -> list[int]:
     return [p.seat_no for p in game_state.players if p.status.alive]
 
@@ -147,6 +222,24 @@ def _maybe_trigger_hunter_shot(
     )
     _maybe_transfer_sheriff_badge(game_state, agents, target)
     return target
+
+
+def _process_night_death_effects(
+    game_state: GameState,
+    agents: dict[int, Agent],
+    deaths: list[int],
+    death_reasons: dict[int, str],
+) -> None:
+    for dead_seat in list(deaths):
+        _maybe_transfer_sheriff_badge(game_state, agents, dead_seat)
+        shot_target = _maybe_trigger_hunter_shot(
+            game_state,
+            agents,
+            dead_seat,
+            death_reasons.get(dead_seat, "night_death"),
+        )
+        if shot_target is not None:
+            _maybe_trigger_hunter_shot(game_state, agents, shot_target, "hunter_shot")
 
 
 # ── Night phase helpers ───────────────────────────────────────────────────────
@@ -558,32 +651,39 @@ def run_night_phase(game_state: GameState, agents: dict[int, Agent]) -> None:
         seer_check_target=seer_check_target,
         guard_target=guard_target,
     )
+    event_start_index = len(game_state.public_state.public_events)
     result = resolve_night(game_state, actions)
     game_state.runtime_state.pending_wolf_kill_target = None
+    defer_night_announcement = _should_defer_night_announcement(game_state)
 
-    _log_event(
+    _store_or_publish_night_announcement(
         game_state,
-        "night_resolved",
+        event_start_index=event_start_index,
         deaths=result.deaths,
         death_reasons=result.death_reasons,
         seer_result=result.seer_result.value if result.seer_result else None,
     )
 
-    for dead_seat in list(result.deaths):
-        _maybe_transfer_sheriff_badge(game_state, agents, dead_seat)
-        shot_target = _maybe_trigger_hunter_shot(
+    if not defer_night_announcement:
+        _process_night_death_effects(
             game_state,
             agents,
-            dead_seat,
-            result.death_reasons.get(dead_seat, "night_death"),
+            list(result.deaths),
+            dict(result.death_reasons),
         )
-        if shot_target is not None:
-            _maybe_trigger_hunter_shot(
-                game_state, agents, shot_target, "hunter_shot"
-            )
 
     winner = check_winner(game_state)
     if winner is not None:
+        announcement = _publish_pending_night_announcement(game_state)
+        if announcement is not None:
+            payload = announcement.get("night_resolved", {})
+            _process_night_death_effects(
+                game_state,
+                agents,
+                list(payload.get("deaths", [])),
+                dict(payload.get("death_reasons", {})),
+            )
+            winner = check_winner(game_state) or winner
         game_state.winner = winner
         game_state.public_state.phase = GamePhase.ended
 
@@ -592,6 +692,20 @@ def run_day_phase(game_state: GameState, agents: dict[int, Agent]) -> None:
     """Execute day phase: each alive player speaks in seat order."""
     game_state.public_state.phase = GamePhase.day
     _run_sheriff_election(game_state, agents)
+    announcement = _publish_pending_night_announcement(game_state)
+    if announcement is not None:
+        payload = announcement.get("night_resolved", {})
+        _process_night_death_effects(
+            game_state,
+            agents,
+            list(payload.get("deaths", [])),
+            dict(payload.get("death_reasons", {})),
+        )
+        winner = check_winner(game_state)
+        if winner is not None:
+            game_state.winner = winner
+            game_state.public_state.phase = GamePhase.ended
+            return
 
     alive_seats = [
         p.seat_no for p in game_state.players if p.status.alive

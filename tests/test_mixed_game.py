@@ -884,6 +884,45 @@ class Test12PlayerMixed:
             assert submit_resp.status_code == 200, submit_resp.text
         assert sheriff_run_seen, "Expected run_for_sheriff pending"
 
+    def test_12p_sheriff_pending_view_hides_night_announcement(self, client):
+        """Human sheriff-election view should not see night result before announcement."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=list(range(1, 13)), seed=42)
+        game_id = data["game_id"]
+
+        pending = None
+        for _ in range(60):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            pending = _pending(body)
+            if pending is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            if pending["action_type"] == "run_for_sheriff":
+                break
+            action = _make_action_for_pending(pending, max_seat=12)
+            submit_resp = _submit_action(
+                client,
+                game_id,
+                pending["seat_no"],
+                action,
+                token=tokens.get(pending["seat_no"]),
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+        assert pending is not None
+        assert pending["action_type"] == "run_for_sheriff"
+
+        view_resp = _get_player_view(
+            client,
+            game_id,
+            pending["seat_no"],
+            token=tokens.get(pending["seat_no"]),
+        )
+        assert view_resp.status_code == 200, view_resp.text
+        event_types = [event.get("type") for event in view_resp.json()["public_events"]]
+        assert "night_resolved" not in event_types
+        assert "player_death" not in event_types
+
     def test_12p_sheriff_vote_has_candidates_in_private_info(self, client):
         """Sheriff vote pending should include candidates list."""
         data, tokens = _create_12p_mixed_game(client, human_seats=list(range(1, 13)), seed=42)

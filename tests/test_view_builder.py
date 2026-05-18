@@ -374,6 +374,32 @@ class TestReasoningSummaryRemoval:
         assert "reasoning_summary" not in nr
         assert nr["deaths"] == [5]
 
+    def test_pending_night_announcement_masks_death_status(self):
+        gs = _make_6p_game_state(phase=GamePhase.day)
+        gs.players[4].status = PlayerStatus(alive=False, can_vote=False)
+        gs.public_state.alive_players.remove(5)
+        gs.public_state.dead_players.append(5)
+        gs.runtime_state.pending_night_announcement = {
+            "death_events": [{"type": "player_death", "seat_no": 5, "reason": "wolf_kill"}],
+            "night_resolved": {
+                "round": 1,
+                "deaths": [5],
+                "death_reasons": {5: "wolf_kill"},
+                "seer_result": None,
+            },
+        }
+
+        hidden_view = build_player_view(gs, 3)
+        visible_p5 = next(player for player in hidden_view.players if player.seat_no == 5)
+        assert visible_p5.alive is True
+        assert visible_p5.can_vote is True
+
+        gs.runtime_state.pending_night_announcement = None
+        announced_view = build_player_view(gs, 3)
+        announced_p5 = next(player for player in announced_view.players if player.seat_no == 5)
+        assert announced_p5.alive is False
+        assert announced_p5.can_vote is False
+
     def test_multiple_events_all_strip_reasoning_summary(self):
         gs = _make_6p_game_state()
         gs.public_state.public_events = [
