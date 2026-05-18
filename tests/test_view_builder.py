@@ -93,6 +93,16 @@ class TestGoodViews:
         assert view.own_role == Role.villager
 
 
+class TestPlayerViewResult:
+    def test_view_includes_public_winner(self):
+        gs = _make_6p_game_state(phase=GamePhase.ended)
+        gs.winner = Camp.good
+        view = build_player_view(gs, 5)
+
+        assert view.winner == Camp.good
+        assert view.model_dump(mode="json")["winner"] == "good"
+
+
 # ── VisiblePlayer must not expose role or camp ─────────────────────────────────
 
 

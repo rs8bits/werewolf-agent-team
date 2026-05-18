@@ -36,6 +36,7 @@ class PlayerView(BaseModel):
     private_info: dict[str, Any] = Field(default_factory=dict)
     available_actions: list[str] = Field(default_factory=list)
     pending_human_action: PendingHumanAction | None = None
+    winner: Camp | None = None
 
 
 # ── Action helpers ─────────────────────────────────────────────────────────────
@@ -271,4 +272,5 @@ def build_player_view(
         private_info=private_info,
         available_actions=actions,
         pending_human_action=visible_pending,
+        winner=game_state.winner,
     )

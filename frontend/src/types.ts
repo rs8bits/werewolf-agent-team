@@ -51,6 +51,7 @@ export interface PlayerView {
   private_info: Record<string, unknown>;
   available_actions: string[];
   pending_human_action?: PendingHumanAction | null;
+  winner?: Camp | null;
 }
 
 export interface PendingHumanAction {

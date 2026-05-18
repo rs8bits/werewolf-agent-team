@@ -306,7 +306,13 @@ function PlayerRoundTable({
         <div className="table-center">
           <span>{phaseLabels[view.phase]}</span>
           <strong>第 {view.round} 轮</strong>
-          <p>{activeSpeech ? eventBody(activeSpeech.event) : "等待公开发言"}</p>
+          <p>
+            {isCamp(view.winner)
+              ? `${campLabels[view.winner]}胜利`
+              : activeSpeech
+                ? eventBody(activeSpeech.event)
+                : "等待公开发言"}
+          </p>
         </div>
         {view.players.map((player, index) => {
           const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
@@ -1351,6 +1357,9 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
   );
   const gamePhase = view?.phase ?? "setup";
   const gameRound = view?.round ?? 0;
+  const playerWinnerText = isCamp(view?.winner) ? `${campLabels[view.winner]}胜利` : null;
+  const playerStatusText =
+    playerWinnerText ?? (gamePhase === "ended" ? "已结束" : pendingAction ? "轮到你" : "等待中");
 
   return (
     <main className="app-shell player-page">
@@ -1373,7 +1382,7 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
         <div className="metric"><span>座位</span><strong>{seatNo}号</strong></div>
         <div className="metric"><span>阶段</span><strong>{phaseLabels[gamePhase]}</strong></div>
         <div className="metric"><span>轮次</span><strong>第 {gameRound} 轮</strong></div>
-        <div className="metric"><span>状态</span><strong>{pendingAction ? "轮到你" : "等待中"}</strong></div>
+        <div className="metric"><span>状态</span><strong>{playerStatusText}</strong></div>
         <div className="metric"><span>Game ID</span><strong style={{ fontSize: 12 }}>{gameId}</strong></div>
       </section>
 
