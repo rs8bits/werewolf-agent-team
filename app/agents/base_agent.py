@@ -173,12 +173,21 @@ class BaseAgent:
         last_error: Exception | None = None
         for attempt in range(3):
             logger.debug("Agent %s sending request (attempt %d)", self.role.value, attempt + 1)
-            response = self._llm_client.chat_json(
-                messages,
-                temperature=0.7 if attempt == 0 else 0.3,
-                max_tokens=1024,
-                response_format={"type": "json_object"},
-            )
+            try:
+                response = self._llm_client.chat_json(
+                    messages,
+                    temperature=0.7 if attempt == 0 else 0.3,
+                    max_tokens=1024,
+                    response_format={"type": "json_object"},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Agent %s LLM request failed (attempt %d): %s",
+                    self.role.value,
+                    attempt + 1,
+                    exc,
+                )
+                raise AgentDecisionError(f"LLM 调用失败：{exc}") from exc
 
             logger.debug("Agent %s raw response: %s", self.role.value, response.content[:500])
 

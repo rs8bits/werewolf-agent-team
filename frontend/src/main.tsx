@@ -506,6 +506,16 @@ function App() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
+      try {
+        const latestGame = await getGame(currentGameId);
+        setGame(latestGame);
+        setEvents(await getEvents(currentGameId));
+        if (selectedSeat != null) {
+          await loadPlayerView(selectedSeat);
+        }
+      } catch {
+        // Keep the original submission error visible.
+      }
     } finally {
       setSubmitting(false);
     }

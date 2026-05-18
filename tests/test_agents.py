@@ -556,6 +556,25 @@ class TestBaseAgentWithMockLLM:
         # User message should not contain truth_state
         assert "truth_state" not in messages[1]["content"].lower()
 
+    def test_llm_call_error_wrapped_as_agent_decision_error(self):
+        gs = _make_6p_game_state(phase=GamePhase.day)
+        view = _make_player_view(gs, seat_no=5)
+
+        cfg = LLMConfig(
+            api_key="test-key",
+            base_url="https://test.example.com/v1",
+            model="qwen-plus",
+            timeout_seconds=60,
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create.side_effect = TimeoutError("Request timed out.")
+
+        client = LLMClient(config=cfg, openai_client=mock_openai)
+        agent = VillagerAgent(llm_client=client)
+
+        with pytest.raises(AgentDecisionError, match="LLM 调用失败：Request timed out"):
+            agent.decide(view)
+
 
 # ── Factory tests ────────────────────────────────────────────────────────────
 

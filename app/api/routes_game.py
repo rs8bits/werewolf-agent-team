@@ -151,6 +151,8 @@ def submit_human_action(
     service = GameSessionService(db)
     try:
         game_state = service.submit_human_action(game_id, seat_no, body)
+    except AgentDecisionError as exc:
+        raise _agent_decision_http_error(exc)
     except ValueError as exc:
         detail = str(exc)
         if "没有等待真人操作" in detail:

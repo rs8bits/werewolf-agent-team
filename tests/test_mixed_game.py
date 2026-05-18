@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.agents import AgentDecisionError
 from app.db import get_db
 from app.main import app
 from app.models import Base
@@ -259,6 +260,24 @@ class TestSubmitHumanAction:
         assert p is not None
         resp = _submit_action(client, game_id, p["seat_no"], {"not": "valid"})
         assert resp.status_code in (422, 400), resp.text
+
+    def test_submit_agent_decision_error_returns_502(self, client, monkeypatch):
+        data = _create_mixed_game(client, human_seats=[1], seed=42)
+        game_id = data["game_id"]
+
+        def fail_submit_human_action(self, game_id, seat_no, decision_data):
+            raise AgentDecisionError("LLM 调用失败：Request timed out.")
+
+        monkeypatch.setattr(
+            GameSessionService,
+            "submit_human_action",
+            fail_submit_human_action,
+        )
+        action = {"action": {"action_type": "speak", "content": "hi"}, "reasoning_summary": ""}
+        resp = _submit_action(client, game_id, 1, action)
+
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "Agent 决策失败：LLM 调用失败：Request timed out."
 
     def test_submit_invalid_target_keeps_pending(self, client):
         data = _create_mixed_game(client, human_seats=[1, 2, 3, 4, 5, 6], seed=42)
