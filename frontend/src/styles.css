@@ -751,6 +751,41 @@ h3 {
   padding: 14px;
 }
 
+.player-round-table {
+  margin-bottom: 14px;
+}
+
+.player-round-table .round-table {
+  min-height: 390px;
+}
+
+.player-round-table .table-center {
+  width: min(38%, 190px);
+  min-height: 110px;
+  padding: 14px;
+}
+
+.player-round-table .table-seat {
+  width: 100px;
+  min-height: 70px;
+}
+
+.table-seat.player-seat {
+  border-left-color: #5d7468;
+}
+
+.table-seat.player-seat.self {
+  border-color: #1d5f46;
+}
+
+.player-section-gap {
+  margin-top: 16px;
+}
+
+.player-speech-list {
+  max-height: 340px;
+}
+
 .player-links {
   font-size: 12px;
 }

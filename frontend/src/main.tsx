@@ -285,6 +285,58 @@ function RoundTable({
   );
 }
 
+function PlayerRoundTable({
+  view,
+  activeSeatNo,
+  activeSpeech
+}: {
+  view: PlayerView | null;
+  activeSeatNo: number | null;
+  activeSpeech: PersistedEvent | null;
+}) {
+  if (!view) {
+    return <div className="empty">还没有玩家视角</div>;
+  }
+
+  const total = view.players.length;
+  const seatRadius = total >= 12 ? 39 : 42;
+  return (
+    <div className="round-table-wrap player-round-table">
+      <div className={`round-table ${total >= 12 ? "dense" : ""}`}>
+        <div className="table-center">
+          <span>{phaseLabels[view.phase]}</span>
+          <strong>第 {view.round} 轮</strong>
+          <p>{activeSpeech ? eventBody(activeSpeech.event) : "等待公开发言"}</p>
+        </div>
+        {view.players.map((player, index) => {
+          const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+          const x = 50 + Math.cos(angle) * seatRadius;
+          const y = 50 + Math.sin(angle) * seatRadius;
+          const isActive = activeSeatNo === player.seat_no;
+          const isSelf = view.viewer_seat_no === player.seat_no;
+          return (
+            <article
+              className={`table-seat player-seat ${player.alive ? "" : "dead"} ${
+                isActive ? "active" : ""
+              } ${isSelf ? "self" : ""}`}
+              key={player.seat_no}
+              style={{ left: `${x}%`, top: `${y}%` }}
+            >
+              <div className="table-seat-head">
+                <strong>{player.seat_no}号</strong>
+                {view.sheriff_seat_no === player.seat_no && <Crown size={12} />}
+              </div>
+              <span>{player.name}</span>
+              <small>{player.player_type === "human" ? "真人玩家" : "AI玩家"}</small>
+              <em>{player.alive ? "存活" : "死亡"}</em>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState<"checking" | "ok" | "down">("checking");
   const [playerCount, setPlayerCount] = useState<6 | 12>(12);
@@ -1275,13 +1327,27 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
     return () => window.clearInterval(timer);
   }, [gameId, seatNo, token]);
 
-  const visibleEvents = useMemo(
+  const playerEvents = useMemo(
     () =>
       (view?.public_events ?? [])
-        .map((event, sequence) => ({ sequence, event, created_at: null }))
-        .filter(shouldShowEvent)
-        .reverse(),
+        .map((event, sequence) => ({ sequence, event, created_at: null })),
     [view?.public_events]
+  );
+  const playerSpeechEvents = useMemo(
+    () =>
+      playerEvents.filter(
+        (item) => speechEventTypes.has(item.event.type) || item.event.type === "round_summary"
+      ),
+    [playerEvents]
+  );
+  const latestPlayerSpeech = playerSpeechEvents.length
+    ? playerSpeechEvents[playerSpeechEvents.length - 1]
+    : null;
+  const activeSpeechSeatNo =
+    typeof latestPlayerSpeech?.event.seat_no === "number" ? latestPlayerSpeech.event.seat_no : null;
+  const visibleEvents = useMemo(
+    () => playerEvents.filter(shouldShowEvent).reverse(),
+    [playerEvents]
   );
   const gamePhase = view?.phase ?? "setup";
   const gameRound = view?.round ?? 0;
@@ -1441,23 +1507,43 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
           )}
         </section>
 
-        {/* Right: events + alive players */}
+        {/* Right: public table + speeches + events */}
         <section className="player-events-card">
           <div className="section-title">
-            <MessageCircle size={18} />
-            <h2>存活玩家</h2>
+            <Users size={18} />
+            <h2>圆桌席位</h2>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-            {(view?.players ?? []).filter(playerAlive).map((p) => (
-              <StatusPill key={p.seat_no} tone={p.seat_no === seatNo ? "good" : "neutral"}>
-                {p.seat_no}号 {p.name}
-              </StatusPill>
+          <PlayerRoundTable
+            view={view}
+            activeSeatNo={activeSpeechSeatNo}
+            activeSpeech={latestPlayerSpeech}
+          />
+
+          <div className="section-title compact player-section-gap">
+            <MessageCircle size={16} />
+            <h3>发言记录</h3>
+          </div>
+          <div className="speech-list player-speech-list">
+            {playerSpeechEvents.map((item) => (
+              <article
+                className={`speech-item ${
+                  item.sequence === latestPlayerSpeech?.sequence ? "active" : ""
+                }`}
+                key={item.sequence}
+              >
+                <span>#{item.sequence}</span>
+                <strong>
+                  {typeof item.event.seat_no === "number" ? `${item.event.seat_no}号` : "摘要"}
+                </strong>
+                <p>{eventBody(item.event)}</p>
+              </article>
             ))}
+            {!playerSpeechEvents.length && <div className="empty slim">暂无发言</div>}
           </div>
 
-          <div className="section-title compact">
+          <div className="section-title compact player-section-gap">
             <Eye size={16} />
-            <h3>事件日志</h3>
+            <h3>系统事件</h3>
           </div>
           <div className="event-list" style={{ maxHeight: 420 }}>
             {visibleEvents.map((item) => (
