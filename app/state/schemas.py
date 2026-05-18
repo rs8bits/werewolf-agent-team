@@ -141,6 +141,8 @@ class RuntimeState(BaseModel):
     mixed_witch_save_target: int | None = None
     mixed_witch_poison_target: int | None = None
     mixed_votes: dict[int, int | None] = Field(default_factory=dict)
+    mixed_death_queue: list[int] = Field(default_factory=list)
+    mixed_death_reasons: dict[int, str] = Field(default_factory=dict)
     seat_token_hashes: dict[int, str] = Field(default_factory=dict)
 
 

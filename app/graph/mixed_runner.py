@@ -12,14 +12,13 @@ from app.engine import (
     resolve_night,
     tally_votes,
 )
-from app.engine.death import find_player
+from app.engine.death import find_player, kill_player
 from app.graph.main_graph import (
     Agent,
     _alive_seats,
     _build_action_view,
     _log_event,
     _maybe_transfer_sheriff_badge,
-    _maybe_trigger_hunter_shot,
 )
 from app.state.schemas import (
     GamePhase,
@@ -84,6 +83,78 @@ def _majority_wolf_target(game_state: GameState) -> int | None:
     max_count = max(counter.values())
     top = [t for t, c in counter.items() if c == max_count]
     return min(top)
+
+
+# ── Mixed hunter shot helper ───────────────────────────────────────────────
+
+
+def _maybe_trigger_hunter_shot_mixed(
+    game_state: GameState,
+    agents: dict[int, Agent],
+    dead_seat: int,
+    death_reason: str,
+) -> MixedResult | int | None:
+    player = find_player(game_state, dead_seat)
+    if player.role != Role.hunter:
+        return None
+    rt = game_state.runtime_state
+    if dead_seat in rt.hunter_shot_used_seats:
+        return None
+    if (
+        death_reason == "witch_poison"
+        and not game_state.rule_config.hunter_can_shoot_when_poisoned
+    ):
+        _log_event(game_state, "hunter_no_shot", seat_no=dead_seat, reason=death_reason)
+        return None
+
+    # Check for submitted human decision
+    decision = None
+    if rt.submitted_human_decision is not None:
+        d = AgentDecision.model_validate(rt.submitted_human_decision)
+        if d.action.action_type == ActionType.hunter_shoot:
+            decision = d
+            rt.submitted_human_decision = None
+
+    if decision is None:
+        if _is_human(game_state, dead_seat):
+            # Block for human hunter — override available_actions since
+            # build_player_view won't return hunter_shoot for a dead player.
+            rt.pending_human_action = PendingHumanAction(
+                seat_no=dead_seat,
+                action_type=ActionType.hunter_shoot.value,
+                round=game_state.public_state.round,
+                phase=game_state.public_state.phase,
+                available_actions=[ActionType.hunter_shoot.value],
+                private_info={"hunter_can_shoot": True},
+            )
+            return MixedResult.blocked
+        decision = agents[dead_seat].decide(
+            _build_action_view(game_state, dead_seat, ActionType.hunter_shoot)
+        )
+
+    action = decision.action
+    target = getattr(action, "target_seat_no", None)
+    alive = _alive_seats(game_state)
+    rt.hunter_shot_used_seats.append(dead_seat)
+    if action.action_type != ActionType.hunter_shoot or target not in alive:
+        _log_event(
+            game_state,
+            "hunter_no_shot",
+            seat_no=dead_seat,
+            reason="invalid_target",
+        )
+        return None
+
+    kill_player(game_state, target, reason="hunter_shot")
+    _log_event(
+        game_state,
+        "hunter_shot",
+        seat_no=dead_seat,
+        target_seat_no=target,
+        reasoning_summary=decision.reasoning_summary,
+    )
+    _maybe_transfer_sheriff_badge(game_state, agents, target)
+    return target
 
 
 # ── Step functions ─────────────────────────────────────────────────────────
@@ -267,27 +338,44 @@ def _step_night_resolve(
         seer_result=result.seer_result.value if result.seer_result else None,
     )
 
-    for dead_seat in list(result.deaths):
-        _maybe_transfer_sheriff_badge(game_state, agents, dead_seat)
-        shot_target = _maybe_trigger_hunter_shot(
-            game_state,
-            agents,
-            dead_seat,
-            result.death_reasons.get(dead_seat, "night_death"),
-        )
-        if shot_target is not None:
-            _maybe_trigger_hunter_shot(
-                game_state, agents, shot_target, "hunter_shot"
-            )
-
-    winner = check_winner(game_state)
-    if winner is not None:
-        game_state.winner = winner
-        game_state.public_state.phase = GamePhase.ended
-        return MixedResult.ended
-
-    rt.mixed_stage = "day_speech"
+    rt.mixed_death_queue = list(result.deaths)
+    rt.mixed_death_reasons = dict(result.death_reasons)
+    rt.mixed_stage = "night_post_deaths"
     rt.mixed_cursor = 0
+    return None
+
+
+def _step_night_post_deaths(
+    game_state: GameState, agents: dict[int, Agent]
+) -> MixedResult | None:
+    rt = game_state.runtime_state
+
+    if rt.mixed_cursor >= len(rt.mixed_death_queue):
+        # All deaths (and cascades) processed
+        winner = check_winner(game_state)
+        if winner is not None:
+            game_state.winner = winner
+            game_state.public_state.phase = GamePhase.ended
+            return MixedResult.ended
+        rt.mixed_stage = "day_speech"
+        rt.mixed_cursor = 0
+        return None
+
+    dead_seat = rt.mixed_death_queue[rt.mixed_cursor]
+    death_reason = rt.mixed_death_reasons.get(dead_seat, "night_death")
+
+    _maybe_transfer_sheriff_badge(game_state, agents, dead_seat)
+    shot_result = _maybe_trigger_hunter_shot_mixed(
+        game_state, agents, dead_seat, death_reason
+    )
+    if shot_result == MixedResult.blocked:
+        return MixedResult.blocked
+    if isinstance(shot_result, int) and shot_result is not None:
+        # Hunter shot killed another player — append to queue for cascade
+        rt.mixed_death_queue.append(shot_result)
+        rt.mixed_death_reasons[shot_result] = "hunter_shot"
+
+    rt.mixed_cursor += 1
     return None
 
 
@@ -342,21 +430,12 @@ def _step_vote(
     ]
 
     if rt.mixed_cursor >= len(voter_seats):
-        # Tally votes
+        # Tally and apply votes
         votes: list[Vote] = []
         for seat_no, target in rt.mixed_votes.items():
             votes.append(Vote(voter_seat_no=seat_no, target_seat_no=target))
         result = tally_votes(game_state, votes)
         eliminated = apply_vote_result(game_state, result)
-        if eliminated is not None:
-            _maybe_transfer_sheriff_badge(game_state, agents, eliminated)
-            shot_target = _maybe_trigger_hunter_shot(
-                game_state, agents, eliminated, "vote_elimination"
-            )
-            if shot_target is not None:
-                _maybe_trigger_hunter_shot(
-                    game_state, agents, shot_target, "hunter_shot"
-                )
 
         _log_event(
             game_state,
@@ -366,21 +445,30 @@ def _step_vote(
             vote_counts=result.vote_counts,
         )
 
-        winner = check_winner(game_state)
-        if winner is not None:
-            game_state.winner = winner
-            game_state.public_state.phase = GamePhase.ended
-            return MixedResult.ended
+        # Process hunter shot if the eliminated player was a hunter
+        if eliminated is not None:
+            _maybe_transfer_sheriff_badge(game_state, agents, eliminated)
+            rt.mixed_death_queue = [eliminated]
+            rt.mixed_death_reasons = {eliminated: "vote_elimination"}
+            rt.mixed_stage = "vote_post_deaths"
+            rt.mixed_cursor = 0
+        else:
+            winner = check_winner(game_state)
+            if winner is not None:
+                game_state.winner = winner
+                game_state.public_state.phase = GamePhase.ended
+                return MixedResult.ended
 
-        # Reset for next cycle
-        rt.mixed_stage = "idle"
-        rt.mixed_cursor = 0
-        rt.mixed_wolf_targets = {}
-        rt.mixed_seer_target = None
-        rt.mixed_witch_save_target = None
-        rt.mixed_witch_poison_target = None
-        rt.mixed_votes = {}
-        return MixedResult.cycle_complete
+            # Reset for next cycle
+            rt.mixed_stage = "idle"
+            rt.mixed_cursor = 0
+            rt.mixed_wolf_targets = {}
+            rt.mixed_seer_target = None
+            rt.mixed_witch_save_target = None
+            rt.mixed_witch_poison_target = None
+            rt.mixed_votes = {}
+            return MixedResult.cycle_complete
+        return None
 
     seat_no = voter_seats[rt.mixed_cursor]
     decision = _apply_human_decision(game_state, ActionType.vote.value)
@@ -409,6 +497,45 @@ def _step_vote(
     return None
 
 
+def _step_vote_post_deaths(
+    game_state: GameState, agents: dict[int, Agent]
+) -> MixedResult | None:
+    rt = game_state.runtime_state
+
+    if rt.mixed_cursor >= len(rt.mixed_death_queue):
+        # All post-vote deaths processed
+        winner = check_winner(game_state)
+        if winner is not None:
+            game_state.winner = winner
+            game_state.public_state.phase = GamePhase.ended
+            return MixedResult.ended
+
+        # Reset for next cycle
+        rt.mixed_stage = "idle"
+        rt.mixed_cursor = 0
+        rt.mixed_wolf_targets = {}
+        rt.mixed_seer_target = None
+        rt.mixed_witch_save_target = None
+        rt.mixed_witch_poison_target = None
+        rt.mixed_votes = {}
+        return MixedResult.cycle_complete
+
+    dead_seat = rt.mixed_death_queue[rt.mixed_cursor]
+    death_reason = rt.mixed_death_reasons.get(dead_seat, "vote_elimination")
+
+    shot_result = _maybe_trigger_hunter_shot_mixed(
+        game_state, agents, dead_seat, death_reason
+    )
+    if shot_result == MixedResult.blocked:
+        return MixedResult.blocked
+    if isinstance(shot_result, int) and shot_result is not None:
+        rt.mixed_death_queue.append(shot_result)
+        rt.mixed_death_reasons[shot_result] = "hunter_shot"
+
+    rt.mixed_cursor += 1
+    return None
+
+
 # ── Step dispatcher ────────────────────────────────────────────────────────
 
 
@@ -417,8 +544,10 @@ _STEP_MAP = {
     "night_seer": _step_night_seer,
     "night_witch": _step_night_witch,
     "night_resolve": _step_night_resolve,
+    "night_post_deaths": _step_night_post_deaths,
     "day_speech": _step_day_speech,
     "vote": _step_vote,
+    "vote_post_deaths": _step_vote_post_deaths,
 }
 
 
@@ -441,6 +570,8 @@ def _step_mixed(
         rt.mixed_witch_save_target = None
         rt.mixed_witch_poison_target = None
         rt.mixed_votes = {}
+        rt.mixed_death_queue = []
+        rt.mixed_death_reasons = {}
         return None
 
     step_fn = _STEP_MAP.get(stage)

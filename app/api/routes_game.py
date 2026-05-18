@@ -27,7 +27,7 @@ class CreateGameRequest(BaseModel):
     rule_config: dict[str, Any] | None = Field(default=None, description="规则配置覆盖")
     seed: int | None = Field(default=None, description="座位随机种子（可选，用于测试）")
     human_seats: list[int] | None = Field(
-        default=None, description="真人座位号列表（例如 [1, 3]），仅 6 人局支持"
+        default=None, description="真人座位号列表（例如 [1, 3]），支持 6/12 人局"
     )
 
     @model_validator(mode="after")
@@ -37,9 +37,9 @@ class CreateGameRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def human_seats_only_for_6_player(self) -> "CreateGameRequest":
-        if self.human_seats is not None and self.player_count != 6:
-            raise ValueError("human_seats only supported for player_count=6")
+    def human_seats_only_for_supported_counts(self) -> "CreateGameRequest":
+        if self.human_seats is not None and self.player_count not in (6, 12):
+            raise ValueError("human_seats only supported for player_count=6 or 12")
         return self
 
 

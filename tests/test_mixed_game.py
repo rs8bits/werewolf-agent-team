@@ -7,11 +7,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agents import AgentDecisionError
+from app.agents.scripted_agent import ScriptedAgent
+from app.config.role_setups import get_role_setup
 from app.db import get_db
+from app.engine import initialize_game, kill_player
 from app.main import app
 from app.models import Base
+from app.graph.mixed_runner import MixedResult, run_mixed_cycle_until_blocked
 from app.services.game_session import GameSessionService
-from app.state.schemas import GamePhase
+from app.state.schemas import GamePhase, PlayerType
 
 
 @pytest.fixture
@@ -132,12 +136,62 @@ class TestCreateMixedGame:
             assert p["player_type"] == "ai"
         assert "human_seat_links" not in resp.json()
 
-    def test_create_mixed_game_12_player_rejected(self, client):
+    def test_create_mixed_game_12_player_accepted(self, client):
         resp = client.post(
             "/games",
-            json={"player_count": 12, "human_seats": [1]},
+            json={"player_count": 12, "human_seats": [1, 5], "seed": 42},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["players"]) == 12
+        assert "human_seat_links" in data
+        assert len(data["human_seat_links"]) == 2
+        assert data["rule_config"]["enable_sheriff"] is False
+        # Check player types
+        assert data["players"][0]["player_type"] == "human"
+        assert data["players"][4]["player_type"] == "human"
+
+    def test_create_mixed_12_player_roles_correct(self, client):
+        resp = client.post(
+            "/games",
+            json={"player_count": 12, "human_seats": [1], "seed": 42},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        roles = [p["role"] for p in data["players"]]
+        assert roles.count("werewolf") == 4
+        assert roles.count("seer") == 1
+        assert roles.count("witch") == 1
+        assert roles.count("hunter") == 1
+        assert roles.count("idiot") == 1
+        assert roles.count("villager") == 4
+
+    def test_create_mixed_12_player_sheriff_disabled(self, client):
+        resp = client.post(
+            "/games",
+            json={"player_count": 12, "human_seats": [1], "seed": 42},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["rule_config"]["enable_sheriff"] is False
+
+    def test_create_pure_ai_12_player_sheriff_enabled(self, client):
+        resp = client.post(
+            "/games",
+            json={"player_count": 12, "seed": 42},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["rule_config"]["enable_sheriff"] is True
+
+    def test_empty_human_seats_12_player_is_pure_ai(self, client):
+        resp = client.post(
+            "/games",
+            json={"player_count": 12, "human_seats": [], "seed": 42},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rule_config"]["enable_sheriff"] is True
+        assert "human_seat_links" not in data
+        assert all(player["player_type"] == "ai" for player in data["players"])
 
     def test_create_mixed_game_duplicate_seats_rejected(self, client):
         resp = client.post(
@@ -589,7 +643,7 @@ class TestMixedPersistence:
 # ── Test helpers ──────────────────────────────────────────────────────────
 
 
-def _make_action_for_pending(pending: dict | None) -> dict:
+def _make_action_for_pending(pending: dict | None, max_seat: int = 6) -> dict:
     assert pending is not None, "Cannot make action for None pending"
     action_type = pending["action_type"]
     available = pending["available_actions"]
@@ -610,18 +664,18 @@ def _make_action_for_pending(pending: dict | None) -> dict:
 
     if "werewolf_kill" in available or action_type == "werewolf_kill":
         return {
-            "action": {"action_type": "werewolf_kill", "target_seat_no": _other_seat(seat_no, 6)},
+            "action": {"action_type": "werewolf_kill", "target_seat_no": _other_seat(seat_no, max_seat)},
             "reasoning_summary": "",
         }
 
     if "seer_check" in available or action_type == "seer_check":
         return {
-            "action": {"action_type": "seer_check", "target_seat_no": _other_seat(seat_no, 6)},
+            "action": {"action_type": "seer_check", "target_seat_no": _other_seat(seat_no, max_seat)},
             "reasoning_summary": "",
         }
 
     if "witch_save" in available or action_type == "witch_save":
-        target = private.get("pending_wolf_kill_target") or _other_seat(seat_no, 6)
+        target = private.get("pending_wolf_kill_target") or _other_seat(seat_no, max_seat)
         return {
             "action": {"action_type": "witch_save", "target_seat_no": target},
             "reasoning_summary": "",
@@ -629,7 +683,13 @@ def _make_action_for_pending(pending: dict | None) -> dict:
 
     if "witch_poison" in available or action_type == "witch_poison":
         return {
-            "action": {"action_type": "witch_poison", "target_seat_no": _other_seat(seat_no, 6)},
+            "action": {"action_type": "witch_poison", "target_seat_no": _other_seat(seat_no, max_seat)},
+            "reasoning_summary": "",
+        }
+
+    if "hunter_shoot" in available or action_type == "hunter_shoot":
+        return {
+            "action": {"action_type": "hunter_shoot", "target_seat_no": _other_seat(seat_no, max_seat)},
             "reasoning_summary": "",
         }
 
@@ -638,3 +698,200 @@ def _make_action_for_pending(pending: dict | None) -> dict:
 
 def _other_seat(seat_no: int, max_seat: int = 6) -> int:
     return seat_no % max_seat + 1
+
+
+def _create_12p_mixed_game(client, human_seats: list[int], seed: int = 42):
+    resp = client.post(
+        "/games",
+        json={
+            "player_count": 12,
+            "human_seats": human_seats,
+            "seed": seed,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    tokens: dict[int, str] = {}
+    for link in data.get("human_seat_links", []):
+        tokens[link["seat_no"]] = link["token"]
+    return data, tokens
+
+
+def _make_12p_state_with_seed(seed: int, human_seats: set[int]):
+    player_types = [
+        PlayerType.human if seat_no in human_seats else PlayerType.ai
+        for seat_no in range(1, 13)
+    ]
+    return initialize_game(
+        f"mixed-12-seed-{seed}",
+        get_role_setup(12),
+        player_types=player_types,
+        seed=seed,
+    )
+
+
+def _agents_for(game_state):
+    return {
+        player.seat_no: ScriptedAgent(role=player.role)
+        for player in game_state.players
+        if player.player_type == PlayerType.ai
+    }
+
+
+class Test12PlayerMixed:
+    def test_create_12p_has_correct_player_count(self, client):
+        data, tokens = _create_12p_mixed_game(client, human_seats=[1, 3])
+        assert len(data["players"]) == 12
+        assert data["rule_config"]["enable_sheriff"] is False
+
+    def test_12p_token_validation(self, client):
+        data, tokens = _create_12p_mixed_game(client, human_seats=[3])
+        game_id = data["game_id"]
+        # No token → 403
+        resp = _get_player_view(client, game_id, 3)
+        assert resp.status_code == 403
+        # Wrong token → 403
+        resp = _get_player_view(client, game_id, 3, token="wrong")
+        assert resp.status_code == 403
+        # Correct token → 200
+        resp = _get_player_view(client, game_id, 3, token=tokens.get(3))
+        assert resp.status_code == 200
+
+    def test_12p_run_cycle_blocks_on_human(self, client):
+        data, tokens = _create_12p_mixed_game(client, human_seats=[1, 2], seed=42)
+        game_id = data["game_id"]
+        resp = _run_cycle(client, game_id)
+        assert resp.status_code == 200
+        p = _pending(resp.json())
+        assert p is not None
+        assert p["seat_no"] >= 1
+
+    def test_12p_small_human_set_cycle_completes(self, client):
+        """12p game with only 1 human seat should progress through cycles."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=[5], seed=42)
+        game_id = data["game_id"]
+
+        actions_submitted = 0
+        for _ in range(50):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            actions_submitted += 1
+        assert actions_submitted > 0
+
+    def test_12p_night_resolved_event_not_duplicated(self, client):
+        """night_resolved should appear exactly once per cycle."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=[1], seed=42)
+        game_id = data["game_id"]
+
+        night_resolved_count = 0
+        for _ in range(30):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                if body.get("runtime_state", {}).get("mixed_stage") == "idle":
+                    continue
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            events = submit_resp.json()["public_state"]["public_events"]
+            nr = [e for e in events if e.get("type") == "night_resolved"]
+            if len(nr) > night_resolved_count:
+                night_resolved_count = len(nr)
+            if (
+                submit_resp.json().get("runtime_state", {}).get("mixed_stage") == "idle"
+                and body["public_state"]["round"] >= 1
+            ):
+                break
+        assert night_resolved_count >= 1
+
+    def test_12p_pure_ai_still_works(self, client):
+        resp = client.post("/games", json={"player_count": 12, "seed": 42})
+        assert resp.status_code == 200
+        game_id = resp.json()["game_id"]
+        resp = client.post(f"/games/{game_id}/run-until-finished", json={"max_cycles": 50})
+        assert resp.status_code == 200
+        assert resp.json()["public_state"]["phase"] == "ended"
+        assert resp.json()["winner"] is not None
+        # Pure AI 12p should still have sheriff enabled
+        assert resp.json()["rule_config"]["enable_sheriff"] is True
+
+
+class Test12PlayerMixedRoleRules:
+    def test_human_hunter_death_blocks_then_resumes(self):
+        game_state = _make_12p_state_with_seed(seed=6, human_seats={1})
+        hunter = game_state.players[0]
+        assert hunter.role.value == "hunter"
+        kill_player(game_state, 1, reason="night_death")
+        game_state.public_state.phase = GamePhase.night
+        game_state.public_state.round = 1
+        game_state.runtime_state.mixed_stage = "night_post_deaths"
+        game_state.runtime_state.mixed_death_queue = [1]
+        game_state.runtime_state.mixed_death_reasons = {1: "night_death"}
+
+        result = run_mixed_cycle_until_blocked(game_state, _agents_for(game_state))
+
+        pending = game_state.runtime_state.pending_human_action
+        assert result == MixedResult.blocked
+        assert pending is not None
+        assert pending.seat_no == 1
+        assert pending.available_actions == ["hunter_shoot"]
+
+        game_state.runtime_state.pending_human_action = None
+        game_state.runtime_state.submitted_human_decision = {
+            "action": {"action_type": "hunter_shoot", "target_seat_no": 2},
+            "reasoning_summary": "真人猎人开枪",
+        }
+        result = run_mixed_cycle_until_blocked(game_state, _agents_for(game_state))
+
+        target = next(player for player in game_state.players if player.seat_no == 2)
+        assert result in (MixedResult.cycle_complete, MixedResult.ended)
+        assert target.status.alive is False
+        assert any(
+            event.get("type") == "hunter_shot" and event.get("target_seat_no") == 2
+            for event in game_state.public_state.public_events
+        )
+
+    def test_idiot_vote_elimination_reveals_instead_of_dying(self):
+        game_state = _make_12p_state_with_seed(seed=1, human_seats=set())
+        idiot = game_state.players[0]
+        assert idiot.role.value == "idiot"
+        game_state.public_state.phase = GamePhase.vote
+        game_state.public_state.round = 1
+        game_state.runtime_state.mixed_stage = "vote"
+        voter_seats = [
+            p.seat_no
+            for p in game_state.players
+            if p.status.alive and p.status.can_vote
+        ]
+        game_state.runtime_state.mixed_cursor = len(voter_seats)
+        game_state.runtime_state.mixed_votes = {
+            seat_no: 1
+            for seat_no in voter_seats
+            if seat_no != 1
+        }
+
+        result = run_mixed_cycle_until_blocked(game_state, _agents_for(game_state))
+
+        assert result == MixedResult.cycle_complete
+        assert idiot.status.alive is True
+        assert idiot.status.can_vote is False
+        assert 1 in game_state.runtime_state.idiot_revealed_seats
+        assert any(
+            event.get("type") == "idiot_revealed" and event.get("seat_no") == 1
+            for event in game_state.public_state.public_events
+        )

@@ -576,6 +576,10 @@ h3 {
   margin-top: 6px;
 }
 
+.seat-toggle-grid.dense {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .seat-toggle {
   min-height: 34px;
   font-size: 12px;

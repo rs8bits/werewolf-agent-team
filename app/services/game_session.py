@@ -179,9 +179,9 @@ class GameSessionService:
             raise ValueError("agent_mode must be 'scripted' or 'llm'")
         human_tokens: dict[int, str] = {}
         if human_seats is not None:
-            if player_count not in (6,):
+            if player_count not in (6, 12):
                 raise ValueError(
-                    f"Human-mixed games only support player_count=6, got {player_count}"
+                    f"Human-mixed games only support player_count=6 or 12, got {player_count}"
                 )
             seen: set[int] = set()
             for seat in human_seats:
@@ -197,6 +197,8 @@ class GameSessionService:
                 human_tokens[seat] = secrets.token_urlsafe(24)
         setup = get_role_setup(player_count)
         rules = rule_config or default_rule_config(player_count)
+        if human_seats and player_count == 12:
+            rules = rules.model_copy(update={"enable_sheriff": False})
         if agent_mode == "llm":
             config = load_config()
             if model:
@@ -204,7 +206,7 @@ class GameSessionService:
             LLMClient(config=config)
         game_id = _short_uuid()
         player_types: list[PlayerType] | None = None
-        if human_seats is not None:
+        if human_seats:
             human_set = set(human_seats)
             player_types = [
                 PlayerType.human if (i + 1) in human_set else PlayerType.ai

@@ -541,7 +541,7 @@ function App() {
   const winnerText = isCamp(game?.winner) ? `${campLabels[game.winner]}胜利` : "未决";
   const hasHumanPlayers =
     game?.players.some((player) => player.player_type === "human") ??
-    (playerCount === 6 && humanSeats.length > 0);
+    humanSeats.length > 0;
   const autoRunLabel = hasHumanPlayers ? "推进到等待/结束" : "跑到结束";
 
   async function loadPlayerView(seatNo: number) {
@@ -700,9 +700,9 @@ function App() {
                   onClick={() => {
                     const nextCount = count as 6 | 12;
                     setPlayerCount(nextCount);
-                    if (nextCount !== 6) {
-                      setHumanSeats([]);
-                    }
+                    setHumanSeats((prev) =>
+                      prev.filter((s) => s >= 1 && s <= nextCount)
+                    );
                   }}
                   type="button"
                 >
@@ -753,7 +753,7 @@ function App() {
                     player_count: playerCount,
                     agent_mode: agentMode,
                     model,
-                    human_seats: playerCount === 6 && humanSeats.length > 0 ? humanSeats : null,
+                    human_seats: humanSeats.length > 0 ? humanSeats : null,
                   });
                   setGame(next);
                   setEvents(await getEvents(next.game_id));
@@ -841,13 +841,13 @@ function App() {
                 <Mic size={14} /> 语音输入
               </button>
             </div>
-            {playerCount === 6 && (
+            {(playerCount === 6 || playerCount === 12) && (
               <div className="human-seat-toggle" style={{ marginTop: 8 }}>
                 <span style={{ fontSize: 12, color: "#5b6d62", fontWeight: 700 }}>
                   真人席位（可多选）
                 </span>
-                <div className="seat-toggle-grid">
-                  {Array.from({ length: 6 }, (_, i) => i + 1).map((seat) => (
+                <div className={`seat-toggle-grid ${playerCount === 12 ? "dense" : ""}`}>
+                  {Array.from({ length: playerCount }, (_, i) => i + 1).map((seat) => (
                     <button
                       key={seat}
                       type="button"
