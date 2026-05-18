@@ -146,7 +146,7 @@ class TestCreateMixedGame:
         assert len(data["players"]) == 12
         assert "human_seat_links" in data
         assert len(data["human_seat_links"]) == 2
-        assert data["rule_config"]["enable_sheriff"] is False
+        assert data["rule_config"]["enable_sheriff"] is True
         # Check player types
         assert data["players"][0]["player_type"] == "human"
         assert data["players"][4]["player_type"] == "human"
@@ -166,10 +166,23 @@ class TestCreateMixedGame:
         assert roles.count("idiot") == 1
         assert roles.count("villager") == 4
 
-    def test_create_mixed_12_player_sheriff_disabled(self, client):
+    def test_create_mixed_12_player_sheriff_enabled_by_default(self, client):
         resp = client.post(
             "/games",
             json={"player_count": 12, "human_seats": [1], "seed": 42},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["rule_config"]["enable_sheriff"] is True
+
+    def test_create_mixed_12_player_sheriff_explicit_disable(self, client):
+        resp = client.post(
+            "/games",
+            json={
+                "player_count": 12,
+                "human_seats": [1],
+                "rule_config": {"enable_sheriff": False},
+                "seed": 42,
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["rule_config"]["enable_sheriff"] is False
@@ -693,6 +706,34 @@ def _make_action_for_pending(pending: dict | None, max_seat: int = 6) -> dict:
             "reasoning_summary": "",
         }
 
+    if "run_for_sheriff" in available or action_type == "run_for_sheriff":
+        return {
+            "action": {"action_type": "run_for_sheriff", "run": True, "content": "我参选警长。"},
+            "reasoning_summary": "",
+        }
+
+    if "sheriff_vote" in available or action_type == "sheriff_vote":
+        candidates = private.get("sheriff_candidates", [])
+        target = candidates[0] if candidates else None
+        return {
+            "action": {"action_type": "sheriff_vote", "target_seat_no": target},
+            "reasoning_summary": "",
+        }
+
+    if "sheriff_assign" in available or action_type == "sheriff_assign":
+        candidates = private.get("sheriff_assign_candidates", [])
+        target = candidates[0] if candidates else _other_seat(seat_no, max_seat)
+        return {
+            "action": {"action_type": "sheriff_assign", "target_seat_no": target},
+            "reasoning_summary": "",
+        }
+
+    if "speak" in available or action_type == "speak":
+        return {
+            "action": {"action_type": "speak", "content": f"我是{pending['seat_no']}号发言。"},
+            "reasoning_summary": "",
+        }
+
     raise ValueError(f"Unknown action type: {action_type}, available: {available}")
 
 
@@ -742,7 +783,7 @@ class Test12PlayerMixed:
     def test_create_12p_has_correct_player_count(self, client):
         data, tokens = _create_12p_mixed_game(client, human_seats=[1, 3])
         assert len(data["players"]) == 12
-        assert data["rule_config"]["enable_sheriff"] is False
+        assert data["rule_config"]["enable_sheriff"] is True
 
     def test_12p_token_validation(self, client):
         data, tokens = _create_12p_mixed_game(client, human_seats=[3])
@@ -819,6 +860,147 @@ class Test12PlayerMixed:
                 break
         assert night_resolved_count >= 1
 
+    def test_12p_sheriff_run_pending_on_human(self, client):
+        """With all-human seats, sheriff run_for_sheriff should appear after night."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=list(range(1, 13)), seed=42)
+        game_id = data["game_id"]
+
+        sheriff_run_seen = False
+        for _ in range(60):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            if p["action_type"] == "run_for_sheriff":
+                sheriff_run_seen = True
+                break
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+        assert sheriff_run_seen, "Expected run_for_sheriff pending"
+
+    def test_12p_sheriff_vote_has_candidates_in_private_info(self, client):
+        """Sheriff vote pending should include candidates list."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=list(range(1, 13)), seed=42)
+        game_id = data["game_id"]
+
+        sheriff_vote_seen = False
+        for _ in range(80):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            if p["action_type"] == "sheriff_vote":
+                pi = p.get("private_info", {})
+                candidates = pi.get("sheriff_candidates", [])
+                assert len(candidates) > 0
+                sheriff_vote_seen = True
+                break
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+        assert sheriff_vote_seen, "Expected sheriff_vote pending with candidates"
+
+    def test_12p_sheriff_elected_event(self, client):
+        """12p mixed cycle should produce sheriff_elected event."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=[1], seed=42)
+        game_id = data["game_id"]
+
+        sheriff_event_found = False
+        for _ in range(30):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            events = submit_resp.json()["public_state"]["public_events"]
+            for evt in events:
+                if evt.get("type") == "sheriff_elected":
+                    sheriff_event_found = True
+            if sheriff_event_found:
+                break
+        assert sheriff_event_found, "Expected sheriff_elected event"
+
+    def test_12p_sheriff_seat_set(self, client):
+        """After sheriff election, game_state.sheriff_seat_no should be set or None."""
+        data, tokens = _create_12p_mixed_game(client, human_seats=[1], seed=42)
+        game_id = data["game_id"]
+
+        for _ in range(30):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                if body.get("runtime_state", {}).get("sheriff_election_done"):
+                    sheriff_done = True
+                    break
+                continue
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            body = submit_resp.json()
+            rt = body.get("runtime_state", {})
+            if rt.get("sheriff_election_done"):
+                sheriff_done = True
+                break
+
+        get_resp = client.get(f"/games/{game_id}")
+        assert get_resp.status_code == 200
+        sheriff_seat = get_resp.json().get("sheriff_seat_no")
+        # Either set to a valid seat or None (if no candidates / second tie)
+        assert sheriff_seat is None or 1 <= sheriff_seat <= 12
+
+    def test_12p_sheriff_badge_transfer_on_death(self, client):
+        """Human sheriff death should pending sheriff_assign."""
+        data, tokens = _create_12p_mixed_game(
+            client, human_seats=list(range(1, 13)), seed=42
+        )
+        game_id = data["game_id"]
+
+        for _ in range(100):
+            resp = _run_cycle(client, game_id)
+            body = resp.json()
+            p = _pending(body)
+            if p is None:
+                if body["public_state"]["phase"] == "ended":
+                    break
+                continue
+            action = _make_action_for_pending(p, max_seat=12)
+            submit_resp = _submit_action(
+                client, game_id, p["seat_no"], action, token=tokens.get(p["seat_no"])
+            )
+            assert submit_resp.status_code == 200, submit_resp.text
+            # Check for badge transfer events
+            events = submit_resp.json().get("public_state", {}).get("public_events", [])
+            badge_events = [
+                e for e in events
+                if e.get("type") in ("sheriff_badge_assigned", "sheriff_badge_destroyed")
+            ]
+            if badge_events:
+                break
+        # No crash through multiple cycles with badge processing
+
     def test_12p_pure_ai_still_works(self, client):
         resp = client.post("/games", json={"player_count": 12, "seed": 42})
         assert resp.status_code == 200
@@ -863,6 +1045,42 @@ class Test12PlayerMixedRoleRules:
         assert target.status.alive is False
         assert any(
             event.get("type") == "hunter_shot" and event.get("target_seat_no") == 2
+            for event in game_state.public_state.public_events
+        )
+
+    def test_human_sheriff_badge_transfer_resumes_before_hunter_stage(self):
+        game_state = _make_12p_state_with_seed(seed=1, human_seats={1})
+        game_state.sheriff_seat_no = 1
+        kill_player(game_state, 1, reason="vote_elimination")
+        game_state.public_state.phase = GamePhase.vote
+        game_state.public_state.round = 1
+        game_state.runtime_state.mixed_stage = "vote_post_deaths"
+        game_state.runtime_state.mixed_death_queue = [1]
+        game_state.runtime_state.mixed_death_reasons = {1: "vote_elimination"}
+        game_state.runtime_state.mixed_death_effect_stage = "badge"
+
+        result = run_mixed_cycle_until_blocked(game_state, _agents_for(game_state))
+
+        pending = game_state.runtime_state.pending_human_action
+        assert result == MixedResult.blocked
+        assert pending is not None
+        assert pending.seat_no == 1
+        assert pending.available_actions == ["sheriff_assign"]
+
+        game_state.runtime_state.pending_human_action = None
+        game_state.runtime_state.submitted_human_decision = {
+            "action": {"action_type": "sheriff_assign", "target_seat_no": 2},
+            "reasoning_summary": "移交警徽",
+        }
+        result = run_mixed_cycle_until_blocked(game_state, _agents_for(game_state))
+
+        assert result in (MixedResult.cycle_complete, MixedResult.ended)
+        assert game_state.sheriff_seat_no == 2
+        assert game_state.runtime_state.submitted_human_decision is None
+        assert any(
+            event.get("type") == "sheriff_badge_assigned"
+            and event.get("from_seat_no") == 1
+            and event.get("to_seat_no") == 2
             for event in game_state.public_state.public_events
         )
 

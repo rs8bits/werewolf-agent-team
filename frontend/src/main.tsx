@@ -146,6 +146,35 @@ function playerAlive(p: { alive?: boolean; status?: { alive: boolean } }): boole
   return p.alive === true || p.status?.alive === true;
 }
 
+function pendingTargetSeats(
+  pending: PendingHumanAction,
+  players: Array<{ seat_no: number; alive?: boolean; status?: { alive: boolean } }>,
+  actionType: string,
+  selfSeatNo: number | null
+): number[] {
+  const privateInfo = pending.private_info ?? {};
+  if (actionType === "sheriff_vote") {
+    const seats = asNumberArray(privateInfo.sheriff_candidates);
+    if (seats.length) return seats;
+  }
+  if (actionType === "vote") {
+    const seats = asNumberArray(privateInfo.pk_tied_seats);
+    if (seats.length) return seats;
+  }
+  if (actionType === "sheriff_assign") {
+    const seats = asNumberArray(privateInfo.sheriff_assign_candidates);
+    if (seats.length) return seats;
+  }
+  if (actionType === "hunter_shoot") {
+    const seats = asNumberArray(privateInfo.hunter_shoot_candidates);
+    if (seats.length) return seats;
+  }
+
+  return players
+    .filter((player) => playerAlive(player) && player.seat_no !== selfSeatNo)
+    .map((player) => player.seat_no);
+}
+
 function compactJson(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -563,13 +592,28 @@ function App() {
       return;
     }
     const actionObj: Record<string, unknown> = { action_type: selected };
-    if (selected === "speak") {
+    if (selected === "run_for_sheriff") {
+      const run = actionForm["run"];
+      if (typeof run !== "boolean") { setError("请选择参选/不参选"); return; }
+      actionObj["run"] = run;
+      if (run && typeof actionForm["speak_content"] === "string") {
+        actionObj["content"] = actionForm["speak_content"];
+      }
+    } else if (selected === "speak") {
       const content = actionForm["speak_content"];
       if (typeof content !== "string" || !content.trim()) {
         setError("发言内容不能为空");
         return;
       }
       actionObj["content"] = content;
+    } else if (
+      selected === "sheriff_assign" ||
+      selected === "hunter_shoot" ||
+      selected === "seer_check"
+    ) {
+      const target = actionForm["target_seat_no"];
+      if (typeof target !== "number") { setError("请选择目标"); return; }
+      actionObj["target_seat_no"] = target;
     } else if (
       selected === "vote" ||
       selected === "sheriff_vote"
@@ -1112,23 +1156,27 @@ function App() {
                     >
                       弃票
                     </button>
-                    {(playerView?.players ?? game?.players ?? [])
-                      .filter(playerAlive)
-                      .map((p) => (
+                    {pendingTargetSeats(
+                      pendingAction,
+                      playerView?.players ?? game?.players ?? [],
+                      String(actionForm["selected_action_type"]),
+                      null
+                    )
+                      .map((seat) => (
                         <button
-                          key={p.seat_no}
+                          key={seat}
                           type="button"
                           className={
-                            actionForm["target_seat_no"] === p.seat_no ? "active" : ""
+                            actionForm["target_seat_no"] === seat ? "active" : ""
                           }
                           onClick={() =>
                             setActionForm((prev) => ({
                               ...prev,
-                              target_seat_no: p.seat_no,
+                              target_seat_no: seat,
                             }))
                           }
                         >
-                          {p.seat_no}号
+                          {seat}号
                         </button>
                       ))}
                   </div>
@@ -1195,6 +1243,93 @@ function App() {
                       建议目标：{String(pendingAction.private_info.pending_wolf_kill_target)}号（被狼击杀）
                     </div>
                   )}
+                </div>
+              )}
+
+              {actionForm["selected_action_type"] === "run_for_sheriff" && (
+                <div className="field-row">
+                  <label>参选</label>
+                  <div className="segmented">
+                    <button
+                      type="button"
+                      className={actionForm["run"] === true ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, run: true }))}
+                    >
+                      参选
+                    </button>
+                    <button
+                      type="button"
+                      className={actionForm["run"] === false ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, run: false }))}
+                    >
+                      不参选
+                    </button>
+                  </div>
+                </div>
+              )}
+              {actionForm["selected_action_type"] === "run_for_sheriff" &&
+                actionForm["run"] === true && (
+                  <div className="field-row">
+                    <label>发言</label>
+                    <textarea
+                      className="textarea"
+                      rows={2}
+                      placeholder="竞选发言（可选）"
+                      value={
+                        typeof actionForm["speak_content"] === "string"
+                          ? (actionForm["speak_content"] as string)
+                          : ""
+                      }
+                      onChange={(e) =>
+                        setActionForm((prev) => ({ ...prev, speak_content: e.target.value }))
+                      }
+                    />
+                  </div>
+              )}
+
+              {actionForm["selected_action_type"] === "hunter_shoot" && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {pendingTargetSeats(
+                      pendingAction,
+                      playerView?.players ?? game?.players ?? [],
+                      "hunter_shoot",
+                      pendingAction.seat_no
+                    ).map((seat) => (
+                        <button
+                          key={seat}
+                          type="button"
+                          className={actionForm["target_seat_no"] === seat ? "active" : ""}
+                          onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: seat }))}
+                        >
+                          {seat}号
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {actionForm["selected_action_type"] === "sheriff_assign" && (
+                <div className="field-row">
+                  <label>警徽移交</label>
+                  <div className="target-grid">
+                    {pendingTargetSeats(
+                      pendingAction,
+                      playerView?.players ?? game?.players ?? [],
+                      "sheriff_assign",
+                      pendingAction.seat_no
+                    ).map((seat) => (
+                        <button
+                          key={seat}
+                          type="button"
+                          className={actionForm["target_seat_no"] === seat ? "active" : ""}
+                          onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: seat }))}
+                        >
+                          {seat}号
+                        </button>
+                      ))}
+                  </div>
                 </div>
               )}
 
@@ -1296,10 +1431,21 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
     const selected = actionForm["selected_action_type"];
     if (typeof selected !== "string") { setError("请选择动作"); return; }
     const actionObj: Record<string, unknown> = { action_type: selected };
-    if (selected === "speak") {
+    if (selected === "run_for_sheriff") {
+      const run = actionForm["run"];
+      if (typeof run !== "boolean") { setError("请选择参选/不参选"); return; }
+      actionObj["run"] = run;
+      if (run && typeof actionForm["speak_content"] === "string") {
+        actionObj["content"] = actionForm["speak_content"];
+      }
+    } else if (selected === "speak") {
       const content = actionForm["speak_content"];
       if (typeof content !== "string" || !content.trim()) { setError("发言内容不能为空"); return; }
       actionObj["content"] = content;
+    } else if (selected === "sheriff_assign" || selected === "hunter_shoot" || selected === "seer_check") {
+      const target = actionForm["target_seat_no"];
+      if (typeof target !== "number") { setError("请选择目标"); return; }
+      actionObj["target_seat_no"] = target;
     } else if (selected === "vote" || selected === "sheriff_vote") {
       const target = actionForm["target_seat_no"];
       actionObj["target_seat_no"] = target === "abstain" ? null : typeof target === "number" ? target : null;
@@ -1472,9 +1618,14 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
                   <div className="target-grid">
                     <button type="button" className={actionForm["target_seat_no"] === "abstain" ? "active" : ""}
                       onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: "abstain" }))}>弃票</button>
-                    {(view?.players ?? []).filter(playerAlive).map((p) => (
-                      <button key={p.seat_no} type="button" className={actionForm["target_seat_no"] === p.seat_no ? "active" : ""}
-                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: p.seat_no }))}>{p.seat_no}号</button>
+                    {pendingTargetSeats(
+                      pendingAction,
+                      view?.players ?? [],
+                      String(actionForm["selected_action_type"]),
+                      null
+                    ).map((seat) => (
+                      <button key={seat} type="button" className={actionForm["target_seat_no"] === seat ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: seat }))}>{seat}号</button>
                     ))}
                   </div>
                 </div>
@@ -1502,6 +1653,57 @@ function PlayerApp({ gameId, seatNo }: { gameId: string; seatNo: number }) {
                   {pendingAction.private_info?.pending_wolf_kill_target != null && (
                     <div className="hint" style={{ marginTop: 4 }}>建议目标：{String(pendingAction.private_info.pending_wolf_kill_target)}号</div>
                   )}
+                </div>
+              )}
+              {actionForm["selected_action_type"] === "run_for_sheriff" && (
+                <div className="field-row">
+                  <label>参选</label>
+                  <div className="segmented">
+                    <button type="button" className={actionForm["run"] === true ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, run: true }))}>参选</button>
+                    <button type="button" className={actionForm["run"] === false ? "active" : ""}
+                      onClick={() => setActionForm((prev) => ({ ...prev, run: false }))}>不参选</button>
+                  </div>
+                </div>
+              )}
+              {actionForm["selected_action_type"] === "run_for_sheriff" && actionForm["run"] === true && (
+                  <div className="field-row">
+                    <label>发言</label>
+                    <textarea className="textarea" rows={2} placeholder="竞选发言（可选）"
+                      value={typeof actionForm["speak_content"] === "string" ? (actionForm["speak_content"] as string) : ""}
+                      onChange={(e) => setActionForm((prev) => ({ ...prev, speak_content: e.target.value }))} />
+                  </div>
+              )}
+              {actionForm["selected_action_type"] === "hunter_shoot" && (
+                <div className="field-row">
+                  <label>目标</label>
+                  <div className="target-grid">
+                    {pendingTargetSeats(
+                      pendingAction,
+                      view?.players ?? [],
+                      "hunter_shoot",
+                      seatNo
+                    ).map((seat) => (
+                      <button key={seat} type="button" className={actionForm["target_seat_no"] === seat ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: seat }))}>{seat}号</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {actionForm["selected_action_type"] === "sheriff_assign" && (
+                <div className="field-row">
+                  <label>警徽移交</label>
+                  <div className="target-grid">
+                    {pendingTargetSeats(
+                      pendingAction,
+                      view?.players ?? [],
+                      "sheriff_assign",
+                      seatNo
+                    ).map((seat) => (
+                      <button key={seat} type="button" className={actionForm["target_seat_no"] === seat ? "active" : ""}
+                        onClick={() => setActionForm((prev) => ({ ...prev, target_seat_no: seat }))}>{seat}号</button>
+                    ))}
+                  </div>
                 </div>
               )}
               <button className="primary" type="button" disabled={busy} onClick={handleSubmit} style={{ marginTop: 8, width: "100%" }}>

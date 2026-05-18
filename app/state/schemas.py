@@ -143,6 +143,12 @@ class RuntimeState(BaseModel):
     mixed_votes: dict[int, int | None] = Field(default_factory=dict)
     mixed_death_queue: list[int] = Field(default_factory=list)
     mixed_death_reasons: dict[int, str] = Field(default_factory=dict)
+    mixed_death_effect_stage: str | None = None
+    mixed_sheriff_candidates: list[int] = Field(default_factory=list)
+    mixed_sheriff_votes: dict[int, int | None] = Field(default_factory=dict)
+    mixed_sheriff_round: int = 0
+    mixed_pk_tied_seats: list[int] = Field(default_factory=list)
+    mixed_pk_votes: dict[int, int | None] = Field(default_factory=dict)
     seat_token_hashes: dict[int, str] = Field(default_factory=dict)
 
 

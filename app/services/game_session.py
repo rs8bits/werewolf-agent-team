@@ -197,8 +197,6 @@ class GameSessionService:
                 human_tokens[seat] = secrets.token_urlsafe(24)
         setup = get_role_setup(player_count)
         rules = rule_config or default_rule_config(player_count)
-        if human_seats and player_count == 12:
-            rules = rules.model_copy(update={"enable_sheriff": False})
         if agent_mode == "llm":
             config = load_config()
             if model:
@@ -321,7 +319,58 @@ class GameSessionService:
     def _validate_human_action_target(
         self, game_state: GameState, decision
     ) -> None:
+        pending = game_state.runtime_state.pending_human_action
+        if pending is None:
+            return
+        action_type = decision.action.action_type.value
+        private_info = pending.private_info or {}
         target = getattr(decision.action, "target_seat_no", None)
+
+        # sheriff_vote: target must be in candidates (or None for abstain)
+        if action_type == "sheriff_vote":
+            candidates = private_info.get("sheriff_candidates", [])
+            if candidates and target is not None and target not in candidates:
+                raise ValueError(
+                    f"sheriff_vote target_seat_no={target} 不在候选 {candidates} 中"
+                )
+            return
+
+        # vote during PK: target must be in pk_tied_seats (or None for abstain)
+        if action_type == "vote" and private_info.get("pk_tied_seats"):
+            pk = private_info["pk_tied_seats"]
+            if target is not None and target not in pk:
+                raise ValueError(
+                    f"PK vote target_seat_no={target} 不在候选 {pk} 中"
+                )
+            return
+
+        # sheriff_assign: target must be alive
+        if action_type == "sheriff_assign":
+            if target is None:
+                raise ValueError("sheriff_assign 必须指定警徽移交目标")
+            candidates = private_info.get("sheriff_assign_candidates")
+            if candidates:
+                if target not in candidates:
+                    raise ValueError(
+                        f"sheriff_assign target_seat_no={target} 不在候选 {candidates} 中"
+                    )
+            else:
+                alive = [p.seat_no for p in game_state.players if p.status.alive]
+                if target not in alive:
+                    raise ValueError(f"sheriff_assign target_seat_no={target} 不是存活玩家")
+            return
+
+        # hunter_shoot: target must be alive, not self
+        if action_type == "hunter_shoot":
+            if target is None:
+                raise ValueError("hunter_shoot 必须指定目标")
+            if target == pending.seat_no:
+                raise ValueError("hunter_shoot 不能选择自己")
+            alive = [p.seat_no for p in game_state.players if p.status.alive]
+            if target not in alive:
+                raise ValueError(f"hunter_shoot target_seat_no={target} 不是存活玩家")
+            return
+
         if target is None:
             return
 
